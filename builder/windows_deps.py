@@ -2,6 +2,7 @@
 import pathlib, re, shutil, subprocess, sys
 out, prefix = map(pathlib.Path, sys.argv[1:])
 index = {p.name.lower(): p for p in prefix.rglob('*.dll')}
+index.update({p.name.lower(): p for p in out.rglob('*.dll')})
 for kind in ('platforms', 'imageformats', 'styles', 'tls', 'iconengines'):
     src = prefix / 'qt6/plugins' / kind
     if src.exists():
