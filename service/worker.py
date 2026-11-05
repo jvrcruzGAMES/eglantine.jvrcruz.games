@@ -90,6 +90,7 @@ def build(sha):
                   f'--memory={memory}', '--pids-limit=2048',
                   '-e', f'PUBLIC_URL={PUBLIC_URL}', '-e', f'PACKAGE_VERSION={version}',
                   '-e', f'BUILD_JOBS={jobs}',
+                  '-e', f'WINDOWS_PREBUILT_LIBS={os.environ.get("WINDOWS_PREBUILT_LIBS", "1")}',
                   '-e', f'MXE_PREBUILT_HOST_QT={os.environ.get("MXE_PREBUILT_HOST_QT", "1")}',
                   '-v', f'{source}:/source', '-v', f'{work}:/work',
                   '-v', f'{cache}:/cache', '-v', f'{mxe}:/opt/mxe',

@@ -16,7 +16,12 @@ python3 /scripts/mxe_setup.py
 # File contents, not timestamps, control when our setup changes invalidate readiness.
 fingerprint=$(sha256sum /scripts/mxe.sh /scripts/mxe_setup.py /scripts/ffmpeg.mk /scripts/dav1d.mk /scripts/qt6-qtbase-minimal.mk | sha256sum | cut -d' ' -f1)
 ready=/opt/mxe/.eglantine-toolchain-ready
-packages=(qt6-qtbase qt6-qtcharts boost openssl opus libusb1 ffmpeg dav1d)
+packages=(boost openssl opus libusb1 ffmpeg dav1d)
+if [[ "${MXE_SKIP_QT:-0}" = 1 ]]; then
+ ready=/opt/mxe/.eglantine-toolchain-core-ready
+else
+ packages+=(qt6-qtbase qt6-qtcharts)
+fi
 complete=true
 for package in "${packages[@]}"; do
  [[ -f /opt/mxe/usr/$triplet/installed/$package ]] || complete=false

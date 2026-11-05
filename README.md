@@ -104,13 +104,23 @@ Both platform builds reuse their persistent CMake/Ninja trees (`data/work/linux/
 
 Dependency downloads, ccache, Qt and the MXE toolchain persist across clean retries. Packaging always runs after successful compilation to create current versioned artifacts. A packaging or Docker startup error does not trigger a clean compilation, since deleting compiler outputs would not fix those errors. Logs identify incremental, first full, and fallback attempts.
 
-`builder/linux.sh` follows upstream's CMake and linuxdeploy approach, using Qt 6.8.3 on Ubuntu 24.04. The `.deb` wraps the same bundled AppDir, so it does not depend on the distribution's older Qt. `builder/windows.sh` builds a pinned MXE toolchain with shared Qt 6 Widgets and Charts, Boost, FFmpeg and other dependencies, then recursively bundles DLL dependencies and Qt plugins into the ZIP. Neither build enables PGO. Toolchain source pinning is in the Windows script; linuxdeploy's continuous tools and upstream dependencies may need maintenance over time.
+`builder/linux.sh` follows upstream's CMake and linuxdeploy approach, using Qt 6.8.3 on Ubuntu 24.04. The `.deb` wraps the same bundled AppDir, so it does not depend on the distribution's older Qt. `builder/windows.sh` uses the pinned MXE compiler and prefers validated official prebuilt Windows MinGW Qt libraries, then recursively bundles DLL dependencies and Qt plugins into the ZIP. Neither build enables PGO. Toolchain source pinning is in the Windows script; linuxdeploy's continuous tools and upstream dependencies may need maintenance over time.
+
+### Prebuilt Windows libraries
+
+Windows builds prefer official Qt **6.8.3 MinGW** libraries (Widgets, Charts and their Qt dependencies), with matching Linux Qt 6.8.3 host tools downloaded through [aqtinstall](https://aqtinstall.readthedocs.io/en/latest/cli.html). This version matches the Qt version already used by the Linux recipe. Windows Qt 6.12.0 was not available through the tested Windows repository, so the optimized native/source Qt 6.12 setup remains the fallback.
+
+`WINDOWS_PREBUILT_LIBS=1` is the default. The builder first prepares only the core MXE dependencies, without Qt, then downloads/reuses the prebuilt kit. Before using it, it compiles and links a Qt Widgets/Charts application with automatic MOC and verifies its recursive DLL dependencies. A missing download, wrong host version, failed probe or application compilation failure selects source-built Qt automatically. `WINDOWS_PREBUILT_LIBS=0` forces the source path. Incremental compilation and its clean retry still apply to each path.
+
+The upstream SDL3 prebuilt bundle remains enabled. Boost, OpenSSL, Opus, USB and AV1-enabled FFmpeg keep the cached MXE source path; no compatible prebuilt artifact is assumed for those packages. In particular, the discovered upstream MinGW FFmpeg bundle does not establish the AV1 support needed by nx2, and the AV1-specific Windows bundle is for MSVC.
+
+Packaging starts in a separate clean directory, includes `nx2_switches.txt`, copies Qt plugins from the selected kit, and resolves DLLs from that same kit. The compiler's own MinGW C++ runtime DLLs take precedence over those shipped with the Qt kit. This avoids mixing previously deployed Qt versions in the ZIP. The probe tests compile/link and dependency closure; it is not a full Windows emulator runtime test.
 
 ### MinGW toolchain performance
 
 A cold Windows build first prepares GCC, Qt and its dependencies. In the supplied server log, completed preparation packages took about 193 minutes before the Windows Qt build finished; GCC alone took 44 minutes, native CMake 22 minutes and native Qt 42 minutes. These are bootstrap costs, separate from compiling Eglantine.
 
-The optimized setup:
+When the source Qt fallback is needed, the optimized setup:
 
 - Reuses the builder image's preinstalled native CMake instead of compiling another copy.
 - Downloads official native Qt 6.12.0 tools rather than compiling host Qt. Host and target Qt versions match, as required by [Qt's cross-compilation guide](https://doc.qt.io/qt-6/cross-compiling-qt.html). Download or validation failure falls back to the source build. `MXE_PREBUILT_HOST_QT=0` opts out.

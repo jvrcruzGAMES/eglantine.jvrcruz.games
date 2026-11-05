@@ -36,7 +36,7 @@ def bootstrap_native_tools(root, cache):
             if not target.exists(): target.symlink_to('/usr/local/bin/' + name)
         (installed / 'cmake').touch()
         print('Using preinstalled native CMake; skipping CMake source compilation.', flush=True)
-    if not (installed / 'qt6-qtbase').exists() and os.environ.get('MXE_PREBUILT_HOST_QT', '1') != '0':
+    if not (installed / 'qt6-qtbase').exists() and os.environ.get('MXE_SKIP_QT', '0') != '1' and os.environ.get('MXE_PREBUILT_HOST_QT', '1') != '0':
         host = cache / 'qt-mxe/6.12.0/gcc_64'
         if not (host / 'bin/qmake').exists():
             try:
