@@ -25,6 +25,40 @@ docker stop eglantine-build-linux eglantine-build-windows
 
 The web page shows build state, the active build log, the last successful commit, checksums, and source downloads. Download buttons remain unavailable until the first complete release. Runtime data stays in ignored `data/`.
 
+## Server deployment with nginx and system services
+
+Place this repository at `/opt/apps/eglantine.jvrcruz.games`. The system units in `deploy/` run as `apps`: `eglantine-web` serves the website and `eglantine-worker` watches and builds the upstream branch. These replace the user-service installation above on the server and start automatically at boot without a login session.
+
+Install the prerequisites above, nginx, and Docker on the server, then run:
+
+```sh
+cd /opt/apps/eglantine.jvrcruz.games
+# Create the service account only if it does not already exist.
+id apps >/dev/null 2>&1 || sudo useradd --system --user-group --home-dir /opt/apps/eglantine.jvrcruz.games --no-create-home --shell /usr/sbin/nologin apps
+sudo usermod -aG docker apps
+sudo chown -R apps:apps /opt/apps/eglantine.jvrcruz.games
+sudo install -m 0644 deploy/eglantine-web.service deploy/eglantine-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now docker eglantine-web eglantine-worker
+
+sudo install -m 0644 deploy/nginx.conf /etc/nginx/sites-available/eglantine.jvrcruz.games
+sudo ln -sfn /etc/nginx/sites-available/eglantine.jvrcruz.games /etc/nginx/sites-enabled/eglantine.jvrcruz.games
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+The Docker group must exist (created by the Docker installation). If `apps` already exists with a different primary group, use that group in the ownership command. The web service binds to `127.0.0.1:39402` by default; `.env` can override `BIND` and `PORT`, so retain those values to match nginx. Avoid running the user services and system services on the same machine at the same time.
+
+`deploy/nginx.conf` accepts HTTP on port 80 for `eglantine.jvrcruz.games` and streams requests to `127.0.0.1:39402`, including package range downloads and update metadata. Configure HTTPS separately at the origin or through your Cloudflare Tunnel; this config does not contain certificates. For Cloudflare Full (strict) with a direct origin connection, add an HTTPS listener and a valid origin certificate before enabling that mode.
+
+```sh
+sudo systemctl status eglantine-web eglantine-worker
+sudo journalctl -u eglantine-worker -f
+curl -H 'Host: eglantine.jvrcruz.games' http://127.0.0.1/healthz
+# After pulling updated service definitions, reinstall them and daemon-reload.
+sudo systemctl restart eglantine-web eglantine-worker
+```
+
 ## Public domain
 
 Hosting is prepared locally; Cloudflare DNS and routing will be configured separately. For Cloudflare Tunnel, point the public hostname to `http://localhost:39402`; the local service does not terminate TLS. A tunnel does not need inbound port forwarding. `deploy/cloudflared.example.yml` contains a ready-to-adapt ingress rule; for an existing tunnel, add only that hostname rule before its catch-all. Disable caching for `/api/status`, `/apt/*`, and `/updates/*`; do not cache stale update metadata. Preserve HTTP Range headers and 206 responses.
