@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'service'))
 import config
 import publish
 import server
+from channels import STABLE, NIGHTLY
 
 class DistributionTests(unittest.TestCase):
     @classmethod
@@ -32,14 +33,14 @@ class DistributionTests(unittest.TestCase):
         res = conn.getresponse(); content = res.read()
         result = res.status, dict(res.getheaders()), content
         conn.close(); return result
-    def stage(self, version):
-        stage = self.data / 'staging' / version
+    def stage(self, version, channel=STABLE):
+        stage = channel.storage(self.data) / 'staging' / version
         stage.mkdir(parents=True)
         root = self.data / ('deb-' + version)
         (root / 'DEBIAN').mkdir(parents=True)
-        (root / 'DEBIAN/control').write_text(f'Package: eglantine\nVersion: {version}\nArchitecture: amd64\nMaintainer: Test <test@example.com>\nDescription: Test\n')
-        subprocess.run(['dpkg-deb','--build', str(root), str(stage / 'eglantine_amd64.deb')], check=True, stdout=subprocess.DEVNULL)
-        for name in ('Eglantine-x86_64.AppImage','Eglantine-x86_64.AppImage.zsync','source.tar.gz'):
+        (root / 'DEBIAN/control').write_text(f'Package: {channel.package}\nVersion: {version}\nArchitecture: amd64\nMaintainer: Test <test@example.com>\nDescription: Test\n')
+        subprocess.run(['dpkg-deb','--build', str(root), str(stage / f'{channel.package}_amd64.deb')], check=True, stdout=subprocess.DEVNULL)
+        for name in (channel.appimage, channel.appimage + '.zsync', 'source.tar.gz'):
             (stage / name).write_bytes(b'0123456789')
         return stage
     def test_distribution(self):
@@ -104,6 +105,37 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(len(list((self.data / 'public/releases').iterdir())), 1)
         self.assertEqual(self.request('/updates/Eglantine-x86_64.AppImage')[0], 200)
         with self.assertRaises(RuntimeError): publish.publish(self.data / 'missing', 'c'*40, '0~nx2.3')
-        self.assertEqual(json.loads(self.request('/api/status')[2])['latest']['commit'],'b'*40)
+        # Publishing one channel must not remove or overwrite the other's artifacts or update feeds.
+        nightly = publish.publish(self.stage('0~nightly.1+ddd', NIGHTLY), 'd'*40, '0~nightly.1+ddd', NIGHTLY)
+        self.assertEqual(nightly['branch'], 'nx2-experimental')
+        self.assertEqual(nightly['package'], 'eglantine-nightly')
+        nightly_url = nightly['artifacts'][0]['url']
+        self.assertEqual(self.request(nightly_url)[0], 200)
+        self.assertEqual(self.request('/nightly/updates/' + NIGHTLY.appimage)[2], b'0123456789')
+        self.assertEqual(self.request('/updates/' + NIGHTLY.appimage)[0], 404)
+        self.assertEqual(self.request('/nightly/updates/' + STABLE.appimage)[0], 404)
+        status = json.loads(self.request('/api/status')[2])
+        self.assertEqual(status['channels']['nightly']['latest']['commit'], 'd'*40)
+        self.assertEqual(status['channels']['stable']['latest']['commit'], 'b'*40)
+        self.assertEqual(json.loads(self.request('/nightly/api/status')[2])['latest']['commit'], 'd'*40)
+        self.assertEqual(self.request('/nightly/releases/%2e%2e/%2e%2e/gnupg/pubring.kbx')[0], 404)
+        old_stable = status['latest']['artifacts'][0]['url']
+        publish.publish(self.stage('0~nx2.4+eee'), 'e'*40, '0~nx2.4+eee')
+        self.assertEqual(self.request(nightly_url)[0], 200)
+        self.assertEqual(self.request(old_stable)[0], 404)
+        publish.publish(self.stage('0~nightly.2+fff', NIGHTLY), 'f'*40, '0~nightly.2+fff', NIGHTLY)
+        self.assertEqual(self.request(nightly_url)[0], 404)
+        self.assertEqual(json.loads(self.request('/api/status')[2])['latest']['commit'], 'e'*40)
+        nightly_packages = (self.data / 'nightly/public/current/apt/dists/stable/main/binary-amd64/Packages').read_text()
+        self.assertIn('Package: eglantine-nightly\n', nightly_packages)
+        self.assertNotIn('Package: eglantine\n', nightly_packages)
+        # A real APT client can use both signed repositories and sees distinct packages.
+        with sources.open('a') as file:
+            file.write(f'deb [signed-by={self.data}/keys/eglantine-archive-keyring.gpg] http://127.0.0.1:{self.http.server_port}/nightly/apt stable main\n')
+        subprocess.run(['apt-get', *options, 'update'], check=True, stdout=subprocess.DEVNULL)
+        policy = subprocess.check_output(['apt-cache', *options, 'policy', 'eglantine', 'eglantine-nightly'], text=True)
+        self.assertIn('Candidate: 0~nx2.4+eee', policy)
+        self.assertIn('Candidate: 0~nightly.2+fff', policy)
+
 
 if __name__ == '__main__': unittest.main()

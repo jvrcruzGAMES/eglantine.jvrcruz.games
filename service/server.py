@@ -8,16 +8,36 @@ import re
 import uuid
 from urllib.parse import unquote, urlsplit
 from config import DATA, ROOT
+from channels import CHANNELS, STABLE, NIGHTLY
+
+def channel_status(channel):
+    data = channel.storage(DATA)
+    state = json.loads((data / 'status.json').read_text()) if (data / 'status.json').exists() else {'phase':'waiting'}
+    release = data / 'public/current/release.json'
+    state['latest'] = json.loads(release.read_text()) if release.exists() else None
+    state['definition'] = channel.public()
+    return state
+
 
 class Handler(SimpleHTTPRequestHandler):
     def do_GET(self): self.serve(False)
     def do_HEAD(self): self.serve(True)
     def serve(self, head):
         path = unquote(urlsplit(self.path).path)
+        if path in ('/nightly', '/nightly/'):
+            self.send_response(302)
+            self.send_header('Location', '/?channel=nightly')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        channel = NIGHTLY if path.startswith('/nightly/') else STABLE
+        if channel is NIGHTLY:
+            path = path[len(channel.prefix):]
+        data = channel.storage(DATA)
         if path == '/api/status':
-            state = json.loads((DATA / 'status.json').read_text()) if (DATA / 'status.json').exists() else {'phase':'waiting'}
-            release = DATA / 'public/current/release.json'
-            state['latest'] = json.loads(release.read_text()) if release.exists() else None
+            state = channel_status(channel)
+            if channel is STABLE:
+                state['channels'] = {item.name: channel_status(item) for item in CHANNELS}
             content = json.dumps(state).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -35,9 +55,9 @@ class Handler(SimpleHTTPRequestHandler):
         elif path == '/eglantine-archive-keyring.gpg':
             base = DATA / 'keys'; relative = path[1:]
         elif path.startswith(('/updates/', '/apt/')):
-            base = (DATA / 'public/current').resolve(); relative = path[1:]
+            base = (data / 'public/current').resolve(); relative = path[1:]
         elif path.startswith(('/releases/', '/logs/')):
-            base = DATA / 'public'; relative = path[1:]
+            base = data / 'public'; relative = path[1:]
         else: return self.send_error(404)
         base = base.resolve()
         file = (base / relative).resolve()

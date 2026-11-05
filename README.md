@@ -1,6 +1,6 @@
 # Eglantine nx2 build distribution
 
-A local build worker watches `https://github.com/Djihads80/Eglantine`, branch `nx2`, every two minutes. It also rebuilds unchanged source every hour (configurable with `REBUILD_SECONDS=3600`), measured from the start of the last successful build. Builds never overlap; when a build takes over an hour, the next hourly build runs after it finishes and the next poll. It builds Linux x86_64 only. AppImage, Debian packages and the signed APT repository are published immediately after Linux packaging and source archiving finish; no other platform build delays publication. A failure leaves the previous release available and retries after 30 minutes. No GitHub credentials or upstream changes are needed.
+A local build worker watches `https://github.com/Djihads80/Eglantine`, branches `nx2` and `nx2-experimental`, every two minutes. It also rebuilds unchanged source in each channel every hour (configurable with `REBUILD_SECONDS=3600`), measured from the start of the last successful build. Builds never overlap; when a build takes over an hour, the next hourly build runs after it finishes and the next poll. It builds Linux x86_64 only, one channel at a time. AppImage, Debian packages and the signed APT repository are published immediately after Linux packaging and source archiving finish; no other platform build delays publication. A failure leaves that channel's previous release available and retries it after 30 minutes; the other channel is still checked and built. No GitHub credentials or upstream changes are needed.
 
 ## Run
 
@@ -81,11 +81,36 @@ sudo systemctl restart eglantine-web eglantine-worker
 
 ## Public domain
 
-Hosting is prepared locally; Cloudflare DNS and routing will be configured separately. For Cloudflare Tunnel, point the public hostname to `http://localhost:39402`; the local service does not terminate TLS. A tunnel does not need inbound port forwarding. `deploy/cloudflared.example.yml` contains a ready-to-adapt ingress rule; for an existing tunnel, add only that hostname rule before its catch-all. Disable caching for `/api/status`, `/apt/*`, and `/updates/*`; do not cache stale update metadata. Preserve HTTP Range headers and 206 responses.
+Hosting is prepared locally; Cloudflare DNS and routing will be configured separately. For Cloudflare Tunnel, point the public hostname to `http://localhost:39402`; the local service does not terminate TLS. A tunnel does not need inbound port forwarding. `deploy/cloudflared.example.yml` contains a ready-to-adapt ingress rule; for an existing tunnel, add only that hostname rule before its catch-all. Disable caching for `/api/status`, `/apt/*`, `/updates/*`, `/nightly/api/status`, `/nightly/apt/*`, and `/nightly/updates/*`; do not cache stale update metadata. Preserve HTTP Range headers and 206 responses.
 
 Create DNS records for `eglantine.jvrcruz.games` pointing to this server, then proxy HTTPS to `127.0.0.1:39402`. An example is in `deploy/Caddyfile`. If the server is behind NAT, forward ports 80/443 to your reverse proxy. Set `PUBLIC_URL` before building: it is embedded in the AppImage metadata and the Debian update source. Changing it requires rebuilding packages.
 
 ## Downloads and updates
+
+The website offers a channel selector. The existing nx2 channel retains all original URLs. Experimental nightly builds are a distinct, co-installable Debian package:
+
+| Channel | Branch | Debian package | AppImage update feed | APT repository |
+| --- | --- | --- | --- | --- |
+| nx2 | `nx2` | `eglantine` | `/updates/Eglantine-x86_64.AppImage.zsync` | `/apt` |
+| Experimental nightly | `nx2-experimental` | `eglantine-nightly` | `/nightly/updates/Eglantine-nightly-x86_64.AppImage.zsync` | `/nightly/apt` |
+
+Nightly AppImages are downloaded from `https://eglantine.jvrcruz.games/nightly/updates/Eglantine-nightly-x86_64.AppImage`. Their embedded update information points exclusively to the nightly zsync feed. `/nightly/` redirects to the website's nightly channel. `/api/status` keeps its existing nx2 fields and also includes a `channels` map; `/nightly/api/status` returns nightly state directly. Nightly version names start with `0~nightly.`.
+
+Install a downloaded nightly package with `sudo apt install ./eglantine-nightly_amd64.deb`. It installs its own `/opt/eglantine-nightly` tree, `/usr/bin/eglantine-nightly` command, **Eglantine Nightly** desktop launcher and icon, `eglantine-nightly-archive-keyring.gpg`, and `eglantine-nightly.list`. None of these files replaces those owned by `eglantine`. Each package configures its own APT source; both repositories use suite `stable` and component `main`, with separate base URLs and package names.
+
+The two channels have independent source checkouts, build trees, status, logs, staging and published releases. Nightly data lives under `data/nightly/`. Qt/tool downloads and the compiler cache are shared. Each successful build publishes immediately, without waiting for the other channel; cleanup affects only that channel. The archive signing key remains shared in `data/gnupg/` and must still be backed up. A single worker service handles both branches; no second service is required.
+
+To enable both channels on an existing server:
+
+```sh
+sudo systemctl stop eglantine-worker
+sudo -u apps git -C /opt/apps/eglantine.jvrcruz.games pull --ff-only
+cd /opt/apps/eglantine.jvrcruz.games
+sudo install -m 0644 deploy/eglantine-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart eglantine-web
+sudo systemctl start eglantine-worker
+```
 
 - `/updates/Eglantine-x86_64.AppImage`: stable AppImage download.
 - `/updates/Eglantine-x86_64.AppImage.zsync`: AppImageUpdate delta feed; embedded using `zsync|https://eglantine.jvrcruz.games/updates/Eglantine-x86_64.AppImage.zsync`.
@@ -96,11 +121,11 @@ Create DNS records for `eglantine.jvrcruz.games` pointing to this server, then p
 
 Install the downloaded Debian package with `sudo apt install ./eglantine_amd64.deb`. It installs `/usr/bin/eglantine`, a bundled application under `/opt/eglantine`, an application launcher and icon, the archive key, and `/etc/apt/sources.list.d/eglantine.list`. Updates use normal `apt update` and `apt upgrade`. AppImage updates use AppImageUpdate; the emulator's own upstream update checker is disabled.
 
-APT metadata is signed with the locally generated archive key. **Back up `data/gnupg/` securely** and retain it across redeployments; losing it breaks trust for existing installations. Never publish that directory. Only the public key is mounted into the build container. Only the latest successful release is retained. After the complete replacement is signed and atomically published, older release directories (including their AppImages, ZIPs, sources, Debian packages and APT indexes) and abandoned staging artifacts are deleted. Failed builds preserve the current release. APT indexes contain only the latest Debian package. Clients using an old release URL or APT index during the switch may need to refresh and retry. Build logs and compiler/toolchain caches are retained.
+APT metadata is signed with the locally generated archive key. **Back up `data/gnupg/` securely** and retain it across redeployments; losing it breaks trust for existing installations. Never publish that directory. Only the public key is mounted into the build container. Only the latest successful release per channel is retained. After the complete replacement is signed and atomically published, older release directories in that channel (including their AppImages, sources, Debian packages and APT indexes) and abandoned staging artifacts are deleted. Failed builds preserve the current release in that channel. Each channel's APT indexes contain only its latest Debian package. Clients using an old release URL or APT index during the switch may need to refresh and retry. Build logs and compiler/toolchain caches are retained.
 
 ## Builds
 
-The Linux build reuses its persistent CMake/Ninja tree (`data/work/linux/linux`). Configuration runs on every attempt to pick up changed inputs; Ninja compiles only what changed. The first build starts with a fresh tree. If incremental configuration or compilation fails, the builder deletes only the Linux CMake build tree and retries once. If the clean retry also fails, the build is marked failed and current downloads remain available.
+Each channel reuses its own persistent CMake/Ninja tree (`data/work/linux/linux` for nx2, `data/nightly/work/linux/linux` for nightly). Configuration runs on every attempt to pick up changed inputs; Ninja compiles only what changed. The first build starts with a fresh tree. If incremental configuration or compilation fails, the builder deletes only the Linux CMake build tree and retries once. If the clean retry also fails, the build is marked failed and current downloads remain available.
 
 Dependency downloads, ccache and Qt persist across clean retries. Packaging runs after successful compilation. A packaging or Docker startup error does not trigger a clean compilation. Logs identify incremental, first full, and fallback attempts.
 

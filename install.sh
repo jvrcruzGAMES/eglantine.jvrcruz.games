@@ -6,7 +6,7 @@ mkdir -p "$HOME/.config/systemd/user" data
 for unit in web worker; do
  cat > "$HOME/.config/systemd/user/eglantine-$unit.service" <<UNIT
 [Unit]
-Description=Eglantine nx2 $unit
+Description=Eglantine $unit
 After=network-online.target
 Wants=network-online.target
 [Service]
@@ -22,7 +22,7 @@ TimeoutStopSec=60
 WantedBy=default.target
 UNIT
  if [[ "$unit" = worker ]]; then
-  sed -i '/RestartSec=15/a ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-linux' "$HOME/.config/systemd/user/eglantine-$unit.service"
+  sed -i '/RestartSec=15/a ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-linux eglantine-nightly-build-linux' "$HOME/.config/systemd/user/eglantine-$unit.service"
  fi
 done
 systemctl --user daemon-reload

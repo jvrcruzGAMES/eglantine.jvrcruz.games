@@ -47,4 +47,29 @@ class DockerStartupTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'permission denied on Docker socket'):
                 docker_resources(io.StringIO())
 
+
+class ChannelSchedulingTests(unittest.TestCase):
+    def test_failed_channel_does_not_delay_other_channel(self):
+        import worker
+        from channels import STABLE, NIGHTLY
+        with tempfile.TemporaryDirectory() as directory, patch.object(worker, 'DATA', Path(directory)):
+            def fake_build(sha, channel):
+                if channel == STABLE:
+                    raise RuntimeError('stable build failed')
+                worker.state(channel, phase='ready', last_success=sha,
+                             last_success_started_at=worker.now())
+            with patch.object(worker.subprocess, 'check_output', side_effect=['a'*40 + '\trefs/heads/nx2', 'b'*40 + '\trefs/heads/nx2-experimental']) as remote, patch.object(worker, 'build', side_effect=fake_build) as builds:
+                worker.poll_channels(3600)
+            self.assertEqual([call.args[1] for call in builds.call_args_list], [STABLE, NIGHTLY])
+            self.assertEqual(remote.call_args_list[1].args[0][-1], 'refs/heads/nx2-experimental')
+            stable = json.loads((Path(directory) / 'status.json').read_text())
+            nightly = json.loads((Path(directory) / 'nightly/status.json').read_text())
+            self.assertEqual(stable['phase'], 'failed')
+            self.assertEqual(nightly['phase'], 'ready')
+            with patch.object(worker.subprocess, 'check_output', return_value='b'*40 + '\trefs/heads/nx2-experimental') as remote, patch.object(worker, 'build') as builds:
+                worker.poll_channels(3600)
+            self.assertEqual(remote.call_count, 1)
+            self.assertEqual(remote.call_args.args[0][-1], 'refs/heads/nx2-experimental')
+            builds.assert_not_called()
+
 if __name__ == '__main__': unittest.main()
