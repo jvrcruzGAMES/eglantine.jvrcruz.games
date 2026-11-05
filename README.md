@@ -12,7 +12,7 @@ cp .env.example .env    # optional: adjust the public URL or polling interval
 loginctl enable-linger "$USER"
 ```
 
-The site listens on **0.0.0.0:39402**. The installer enables `eglantine-web.service` and `eglantine-worker.service` for the current user. Linger keeps them running after logout and starts them at boot. Builds are capped at 6 CPUs and 10 GiB RAM. The first Windows toolchain build can take hours and substantial disk space; subsequent builds reuse it and ccache. Ubuntu 24.04 is the Linux ABI baseline.
+The site listens on **0.0.0.0:39402**. The installer enables `eglantine-web.service` and `eglantine-worker.service` for the current user. Linger keeps them running after logout and starts them at boot. Build containers have no Docker CPU quota. Compiler parallelism defaults to at most six jobs, clamped to the Docker daemon CPU count. Memory defaults to min(10 GiB, 75% of Docker host RAM). `BUILD_JOBS` and `BUILD_MEMORY` can override these settings. The first Windows toolchain build can take hours and substantial disk space; subsequent builds reuse it and ccache. Ubuntu 24.04 is the Linux ABI baseline.
 
 ```sh
 systemctl --user status eglantine-web eglantine-worker
@@ -114,3 +114,16 @@ node --check web/app.js
 ```
 
 Integration tests generate two signed test repositories and verify signatures, removal of superseded packages, atomic publication, failed-release preservation, HTTP ranges, HEAD requests and path traversal rejection. They use temporary data and do not publish test artifacts to the running site.
+
+## Docker startup failures
+
+Docker exit status 125 indicates a container startup failure, before the build script runs. The worker now includes the last 8 KiB of build output in its journal error and status metadata, rather than only the failing command. Full output remains in the build log linked on the download page.
+
+On servers with fewer than six CPUs, the old fixed `--cpus=6` could prevent Docker from starting the container. The worker no longer passes a Docker CPU quota and reads the daemon CPU count to size compiler parallelism. After updating, restart the worker to retry immediately:
+
+```sh
+sudo systemctl restart eglantine-worker
+sudo journalctl -u eglantine-worker -n 80 --no-pager
+```
+
+If startup still fails, the logged Docker error distinguishes issues such as container-name conflicts, missing Docker group access, unavailable mounts, and unsupported host limits. Do not remove an active build container without first stopping its worker.

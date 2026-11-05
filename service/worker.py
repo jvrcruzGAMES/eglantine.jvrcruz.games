@@ -21,7 +21,36 @@ def state(**changes):
 
 def now(): return dt.datetime.now(dt.timezone.utc).isoformat()
 def call(args, log=None, **kw):
-    return subprocess.run(args, check=True, stdout=log, stderr=subprocess.STDOUT if log else None, **kw)
+    try:
+        return subprocess.run(args, check=True, stdout=log, stderr=subprocess.STDOUT if log else None, **kw)
+    except subprocess.CalledProcessError as exc:
+        if log is None:
+            raise
+        log.flush()
+        with open(log.name, 'rb') as output:
+            output.seek(0, os.SEEK_END)
+            output.seek(max(0, output.tell() - 8192))
+            tail = output.read().decode('utf-8', errors='replace').strip()
+        raise RuntimeError(f'{args[0]} exited with status {exc.returncode}. Build log tail:\n{tail}') from exc
+
+
+def docker_resources(log):
+    try:
+        info = json.loads(subprocess.check_output(
+            ['docker', 'info', '--format', '{{json .}}'], text=True,
+            stderr=subprocess.STDOUT, timeout=30))
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f'Cannot inspect Docker daemon: {exc.output.strip()}') from exc
+    available = int(info['NCPU'])
+    if available < 1:
+        raise ValueError('Docker daemon CPU count must be positive')
+    jobs = min(max(1, int(os.environ.get('BUILD_JOBS', '6'))), available)
+    memory = os.environ.get('BUILD_MEMORY')
+    if not memory:
+        memory = str(min(10 * 1024**3, int(info['MemTotal'] * 0.75)))
+    log.write(f'Docker build resources: jobs={jobs}, memory={memory} (daemon CPUs={available})\n')
+    log.flush()
+    return jobs, memory
 
 def needs_build(previous, sha, current_time, rebuild_seconds):
     if previous.get('last_success') != sha:
@@ -50,6 +79,7 @@ def build(sha):
         call(['git', '-C', str(source), 'checkout', '--force', sha], log)
         call(['git', '-C', str(source), 'submodule', 'update', '--init', '--recursive'], log)
         call(['docker', 'build', '-t', 'eglantine-builder:local', str(ROOT / 'builder')], log)
+        jobs, memory = docker_resources(log)
         for platform in ('linux', 'windows'):
             state(platform=platform)
             work = DATA / 'work' / platform
@@ -57,9 +87,9 @@ def build(sha):
             mxe = DATA / 'mxe'
             for path in (work, cache, mxe): path.mkdir(parents=True, exist_ok=True)
             call(['docker', 'run', '--rm', '--name', f'eglantine-build-{platform}',
-                  '--memory=10g', '--cpus=6', '--pids-limit=2048',
+                  f'--memory={memory}', '--pids-limit=2048',
                   '-e', f'PUBLIC_URL={PUBLIC_URL}', '-e', f'PACKAGE_VERSION={version}',
-                  '-e', f'BUILD_JOBS={os.environ.get("BUILD_JOBS", "6")}',
+                  '-e', f'BUILD_JOBS={jobs}',
                   '-v', f'{source}:/source', '-v', f'{work}:/work',
                   '-v', f'{cache}:/cache', '-v', f'{mxe}:/opt/mxe',
                   '-v', f'{staging}:/out', '-v', f'{DATA / "keys"}:/keys:ro',
