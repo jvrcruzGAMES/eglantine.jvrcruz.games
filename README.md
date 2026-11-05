@@ -41,20 +41,40 @@ sudo install -m 0644 deploy/eglantine-web.service deploy/eglantine-worker.servic
 sudo systemctl daemon-reload
 sudo systemctl enable --now docker eglantine-web eglantine-worker
 
-sudo install -m 0644 deploy/nginx.conf /etc/nginx/sites-available/eglantine.jvrcruz.games
-sudo ln -sfn /etc/nginx/sites-available/eglantine.jvrcruz.games /etc/nginx/sites-enabled/eglantine.jvrcruz.games
-sudo nginx -t
-sudo systemctl reload nginx
 ```
 
 The Docker group must exist (created by the Docker installation). If `apps` already exists with a different primary group, use that group in the ownership command. The web service binds to `127.0.0.1:39402` by default; `.env` can override `BIND` and `PORT`, so retain those values to match nginx. Avoid running the user services and system services on the same machine at the same time.
 
-`deploy/nginx.conf` accepts HTTP on port 80 for `eglantine.jvrcruz.games` and streams requests to `127.0.0.1:39402`, including package range downloads and update metadata. Configure HTTPS separately at the origin or through your Cloudflare Tunnel; this config does not contain certificates. For Cloudflare Full (strict) with a direct origin connection, add an HTTPS listener and a valid origin certificate before enabling that mode.
+### HTTPS with nginx and Let's Encrypt
+
+`deploy/nginx.conf` redirects HTTP to HTTPS and proxies HTTPS to `127.0.0.1:39402`. It uses `/etc/letsencrypt/live/eglantine.jvrcruz.games/fullchain.pem` and `privkey.pem`. Obtain the certificate before installing this config. The HTTP challenge path stays available for renewals. References: [nginx HTTPS](https://nginx.org/en/docs/http/configuring_https_servers.html), [Certbot webroot](https://eff-certbot.readthedocs.io/en/stable/using.html#webroot).
+
+Point DNS at this server and allow inbound ports 80 and 443. HTTP-01 validation must reach this nginx server on port 80; Cloudflare redirects or cache rules must not intercept `/.well-known/acme-challenge/*`. For a Cloudflare Tunnel directly to the app, retain the existing ingress configuration and Cloudflare edge HTTPS.
+
+On Ubuntu/Debian, bootstrap with HTTP, issue the certificate, then switch to HTTPS:
+
+```sh
+cd /opt/apps/eglantine.jvrcruz.games
+sudo apt-get install -y certbot
+sudo install -d -m 0755 /var/www/letsencrypt
+sudo install -m 0644 deploy/nginx-http.conf /etc/nginx/sites-available/eglantine.jvrcruz.games
+sudo ln -sfn /etc/nginx/sites-available/eglantine.jvrcruz.games /etc/nginx/sites-enabled/eglantine.jvrcruz.games
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot certonly --webroot -w /var/www/letsencrypt --cert-name eglantine.jvrcruz.games -d eglantine.jvrcruz.games
+# Continue only after Certbot successfully issues the certificate.
+sudo install -m 0644 deploy/nginx.conf /etc/nginx/sites-available/eglantine.jvrcruz.games
+sudo nginx -t && sudo systemctl reload nginx
+sudo install -D -m 0755 deploy/renewal-reload-nginx.sh /etc/letsencrypt/renewal-hooks/deploy/eglantine-reload-nginx
+sudo systemctl enable --now certbot.timer
+sudo certbot renew --dry-run
+```
+
+If the certificate already exists at those paths, skip bootstrap and issuance. The deploy hook validates and reloads nginx after successful renewals. With Cloudflare proxied DNS and a direct origin connection, select **Full (strict)** after HTTPS is ready. Private keys stay on the server and are never committed.
 
 ```sh
 sudo systemctl status eglantine-web eglantine-worker
 sudo journalctl -u eglantine-worker -f
-curl -H 'Host: eglantine.jvrcruz.games' http://127.0.0.1/healthz
+curl --resolve eglantine.jvrcruz.games:443:127.0.0.1 https://eglantine.jvrcruz.games/healthz
 # After pulling updated service definitions, reinstall them and daemon-reload.
 sudo systemctl restart eglantine-web eglantine-worker
 ```
