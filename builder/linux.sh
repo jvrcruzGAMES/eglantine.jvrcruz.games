@@ -6,8 +6,8 @@ fi
 export QT_ROOT_DIR=/cache/qt/6.8.3/gcc_64
 export PATH="$QT_ROOT_DIR/bin:$PATH"
 export LD_LIBRARY_PATH="$QT_ROOT_DIR/lib:${LD_LIBRARY_PATH:-}"
-cmake -S . -B /work/linux -G Ninja "${common_flags[@]}" -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
-cmake --build /work/linux --target yuzu yuzu-cmd
+python3 /scripts/incremental_build.py --build-dir /work/linux -- \
+ cmake -S . -B /work/linux -G Ninja "${common_flags[@]}" -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
 strip /work/linux/bin/eglantine /work/linux/bin/eden-cli
 mkdir -p /cache/tools /out
 for name in linuxdeploy linuxdeploy-plugin-qt; do

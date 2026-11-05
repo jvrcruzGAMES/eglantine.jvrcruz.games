@@ -100,6 +100,10 @@ APT metadata is signed with the locally generated archive key. **Back up `data/g
 
 ## Builds
 
+Both platform builds reuse their persistent CMake/Ninja trees (`data/work/linux/linux` and `data/work/windows/windows`). Configuration runs on every attempt to pick up changed inputs; Ninja compiles only what changed. The first build starts with a fresh tree. If incremental configuration or compilation fails, the builder deletes only that platform's CMake build tree and retries configuration and compilation once. If the clean retry also fails, the build is marked failed and current downloads remain available.
+
+Dependency downloads, ccache, Qt and the MXE toolchain persist across clean retries. Packaging always runs after successful compilation to create current versioned artifacts. A packaging or Docker startup error does not trigger a clean compilation, since deleting compiler outputs would not fix those errors. Logs identify incremental, first full, and fallback attempts.
+
 `builder/linux.sh` follows upstream's CMake and linuxdeploy approach, using Qt 6.8.3 on Ubuntu 24.04. The `.deb` wraps the same bundled AppDir, so it does not depend on the distribution's older Qt. `builder/windows.sh` builds a pinned MXE toolchain with shared Qt 6 Widgets and Charts, Boost, FFmpeg and other dependencies, then recursively bundles DLL dependencies and Qt plugins into the ZIP. Neither build enables PGO. Toolchain source pinning is in the Windows script; linuxdeploy's continuous tools and upstream dependencies may need maintenance over time.
 
 Publication stages the files, generates hashes and APT metadata, signs the repository, then atomically switches `data/public/current`. The HTTP server supports byte ranges for delta downloads and does not expose private state or directory listings. The source archive contains the application checkout, fetched application dependencies, and builder scripts; toolchain caches are kept separately.
@@ -112,6 +116,8 @@ python3 -m compileall -q service builder/windows_deps.py
 bash -n builder/*.sh install.sh
 node --check web/app.js
 ```
+
+The incremental-build tests also require CMake, Ninja and a C compiler on the test host. They compile a small native project to verify object reuse and clean fallback after configuration or compilation errors.
 
 Integration tests generate two signed test repositories and verify signatures, removal of superseded packages, atomic publication, failed-release preservation, HTTP ranges, HEAD requests and path traversal rejection. They use temporary data and do not publish test artifacts to the running site.
 
