@@ -71,7 +71,7 @@ def build(sha):
     staging = DATA / 'staging' / version
     staging.mkdir(parents=True)
     started_at = now()
-    state(phase='building', commit=sha, started_at=started_at, log=f'/logs/{logname}', error=None)
+    state(phase='building', platform='linux', commit=sha, started_at=started_at, log=f'/logs/{logname}', error=None)
     with (logs / logname).open('w', buffering=1) as log:
         if not (source / '.git').exists():
             call(['git', 'clone', '--depth', '1', '--no-checkout', '--branch', BRANCH, UPSTREAM, str(source)], log)
@@ -80,25 +80,22 @@ def build(sha):
         call(['git', '-C', str(source), 'submodule', 'update', '--init', '--recursive'], log)
         call(['docker', 'build', '-t', 'eglantine-builder:local', str(ROOT / 'builder')], log)
         jobs, memory = docker_resources(log)
-        for platform in ('linux', 'windows'):
+        for platform in ('linux',):
             state(platform=platform)
             work = DATA / 'work' / platform
             cache = DATA / 'cache'
-            mxe = DATA / 'mxe'
-            for path in (work, cache, mxe): path.mkdir(parents=True, exist_ok=True)
+            for path in (work, cache): path.mkdir(parents=True, exist_ok=True)
             call(['docker', 'run', '--rm', '--name', f'eglantine-build-{platform}',
                   f'--memory={memory}', '--pids-limit=2048',
                   '-e', f'PUBLIC_URL={PUBLIC_URL}', '-e', f'PACKAGE_VERSION={version}',
                   '-e', f'BUILD_JOBS={jobs}',
-                  '-e', f'WINDOWS_PREBUILT_LIBS={os.environ.get("WINDOWS_PREBUILT_LIBS", "1")}',
-                  '-e', f'MXE_PREBUILT_HOST_QT={os.environ.get("MXE_PREBUILT_HOST_QT", "1")}',
                   '-v', f'{source}:/source', '-v', f'{work}:/work',
-                  '-v', f'{cache}:/cache', '-v', f'{mxe}:/opt/mxe',
+                  '-v', f'{cache}:/cache',
                   '-v', f'{staging}:/out', '-v', f'{DATA / "keys"}:/keys:ro',
                   '-v', f'{ROOT / "builder"}:/scripts:ro',
                   'eglantine-builder:local', 'bash', f'/scripts/{platform}.sh'], log)
         # Include the exact checkout, fetched dependency sources and build instructions.
-        call(['tar', '--exclude=.git', '-czf', str(staging / 'source.tar.gz'),
+        call(['tar', '--exclude=.git', '--exclude=__pycache__', '--exclude=*.pyc', '-czf', str(staging / 'source.tar.gz'),
               '-C', str(DATA), 'source', '-C', str(ROOT), 'builder'], log)
         release = publish(staging, sha, version)
     state(phase='ready', platform=None, last_success=sha, release=release['version'],

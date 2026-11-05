@@ -10,7 +10,7 @@ async function refresh() {
     const response = await fetch('/api/status', {cache:'no-store'});
     if (!response.ok) throw new Error('Status unavailable');
     const status = await response.json();
-    const labels = {waiting:'Waiting for the first build', building:`Building ${status.platform || 'source'} · ${(status.commit || '').slice(0,12)}`, ready:'Watching nx2 · up to date', failed:'Build failed · automatic retry scheduled'};
+    const labels = {waiting:'Waiting for the first build', building:`Building Linux · ${(status.commit || '').slice(0,12)}`, ready:'Watching nx2 · up to date', failed:'Build failed · automatic retry scheduled'};
     document.querySelector('#status').textContent = labels[status.phase] || 'Watching nx2';
     const log = document.querySelector('#log');
     log.hidden = !status.log;

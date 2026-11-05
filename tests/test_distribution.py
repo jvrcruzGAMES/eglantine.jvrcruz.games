@@ -39,13 +39,15 @@ class DistributionTests(unittest.TestCase):
         (root / 'DEBIAN').mkdir(parents=True)
         (root / 'DEBIAN/control').write_text(f'Package: eglantine\nVersion: {version}\nArchitecture: amd64\nMaintainer: Test <test@example.com>\nDescription: Test\n')
         subprocess.run(['dpkg-deb','--build', str(root), str(stage / 'eglantine_amd64.deb')], check=True, stdout=subprocess.DEVNULL)
-        for name in ('Eglantine-x86_64.AppImage','Eglantine-x86_64.AppImage.zsync','Eglantine-Windows-x86_64.zip','source.tar.gz'):
+        for name in ('Eglantine-x86_64.AppImage','Eglantine-x86_64.AppImage.zsync','source.tar.gz'):
             (stage / name).write_bytes(b'0123456789')
         return stage
     def test_distribution(self):
         self.assertEqual(self.request('/')[0], 200)
+        self.assertNotIn(b'Portable ZIP', self.request('/')[2])
         self.assertEqual(json.loads(self.request('/api/status')[2])['latest'], None)
         one = publish.publish(self.stage('0~nx2.1+abc'), 'a'*40, '0~nx2.1+abc')
+        self.assertNotIn('Eglantine-Windows-x86_64.zip', {a['name'] for a in one['artifacts']})
         first = (self.data / 'public/current').resolve()
         subprocess.run(['gpg', '--homedir', str(self.data / 'gnupg'), '--verify', str(first / 'apt/dists/stable/InRelease')], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         url = one['artifacts'][0]['url']
@@ -62,10 +64,13 @@ class DistributionTests(unittest.TestCase):
         self.assertIn(b'\r\n\r\n89\r\n',content)
         self.assertEqual(self.request('/releases/%2e%2e/%2e%2e/gnupg/pubring.kbx')[0],404)
         self.assertEqual(self.request('/updates/Eglantine-x86_64.AppImage')[2],b'0123456789')
+        legacy_zip = first.parent / 'Eglantine-Windows-x86_64.zip'
+        legacy_zip.write_bytes(b'legacy Windows artifact')
         abandoned = self.stage('0~nx2.failed')
         publish.publish(self.stage('0~nx2.2+def'), 'b'*40, '0~nx2.2+def')
         self.assertFalse(abandoned.exists())
         self.assertFalse(first.exists())
+        self.assertFalse(legacy_zip.exists())
         self.assertEqual(self.request(url)[0], 404)
         self.assertEqual(len(list((self.data / 'public/releases').iterdir())), 1)
         self.assertEqual(len(list((self.data / 'public/current/apt/pool/main/e/eglantine').glob('*.deb'))),1)

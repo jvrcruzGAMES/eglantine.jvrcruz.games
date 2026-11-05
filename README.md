@@ -1,6 +1,6 @@
 # Eglantine nx2 build distribution
 
-A local build worker watches `https://github.com/Djihads80/Eglantine`, branch `nx2`, every two minutes. It also rebuilds unchanged source every hour (configurable with `REBUILD_SECONDS=3600`), measured from the start of the last successful build. Builds never overlap; when a build takes over an hour, the next hourly build runs after it finishes and the next poll. It compiles Linux x86_64 and cross-compiles Windows x86_64 with MinGW using MXE. Only a complete set of packages is published. A failure leaves the previous release available and retries after 30 minutes. No GitHub credentials or upstream changes are needed.
+A local build worker watches `https://github.com/Djihads80/Eglantine`, branch `nx2`, every two minutes. It also rebuilds unchanged source every hour (configurable with `REBUILD_SECONDS=3600`), measured from the start of the last successful build. Builds never overlap; when a build takes over an hour, the next hourly build runs after it finishes and the next poll. It builds Linux x86_64 only. AppImage, Debian packages and the signed APT repository are published immediately after Linux packaging and source archiving finish; no other platform build delays publication. A failure leaves the previous release available and retries after 30 minutes. No GitHub credentials or upstream changes are needed.
 
 ## Run
 
@@ -12,7 +12,7 @@ cp .env.example .env    # optional: adjust the public URL or polling interval
 loginctl enable-linger "$USER"
 ```
 
-The site listens on **0.0.0.0:39402**. The installer enables `eglantine-web.service` and `eglantine-worker.service` for the current user. Linger keeps them running after logout and starts them at boot. Build containers have no Docker CPU quota. Compiler parallelism defaults to at most six jobs, clamped to the Docker daemon CPU count. Memory defaults to min(10 GiB, 75% of Docker host RAM). `BUILD_JOBS` and `BUILD_MEMORY` can override these settings. The first Windows toolchain build can take hours and substantial disk space; subsequent builds reuse it and ccache. Ubuntu 24.04 is the Linux ABI baseline.
+The site listens on **0.0.0.0:39402**. The installer enables `eglantine-web.service` and `eglantine-worker.service` for the current user. Linger keeps them running after logout and starts them at boot. Build containers have no Docker CPU quota. Compiler parallelism defaults to at most six jobs, clamped to the Docker daemon CPU count. Memory defaults to min(10 GiB, 75% of Docker host RAM). `BUILD_JOBS` and `BUILD_MEMORY` can override these settings. Subsequent Linux builds reuse their CMake/Ninja tree, dependencies and ccache. Ubuntu 24.04 is the Linux ABI baseline.
 
 ```sh
 systemctl --user status eglantine-web eglantine-worker
@@ -20,10 +20,10 @@ journalctl --user -u eglantine-worker -f
 curl http://127.0.0.1:39402/api/status
 systemctl --user stop eglantine-worker
 # Stop any active owned build container when stopping manually:
-docker stop eglantine-build-linux eglantine-build-windows
+docker stop eglantine-build-linux
 ```
 
-The web page shows build state, the active build log, the last successful commit, checksums, and source downloads. Download buttons remain unavailable until the first complete release. Runtime data stays in ignored `data/`.
+The web page shows build state, the active build log, the last successful commit, checksums, and source downloads. Download buttons become available after the first successful Linux build. Runtime data stays in ignored `data/`.
 
 ## Server deployment with nginx and system services
 
@@ -94,44 +94,30 @@ Create DNS records for `eglantine.jvrcruz.games` pointing to this server, then p
 - `/api/status`: watcher and release metadata.
 - `/releases/<version>/`: immutable artifact URLs (see the release metadata; no directory listing).
 
-Install the downloaded Debian package with `sudo apt install ./eglantine_amd64.deb`. It installs `/usr/bin/eglantine`, a bundled application under `/opt/eglantine`, an application launcher and icon, the archive key, and `/etc/apt/sources.list.d/eglantine.list`. Updates use normal `apt update` and `apt upgrade`. AppImage updates use AppImageUpdate; the emulator's own upstream update checker is disabled. Windows ZIP updates are manual.
+Install the downloaded Debian package with `sudo apt install ./eglantine_amd64.deb`. It installs `/usr/bin/eglantine`, a bundled application under `/opt/eglantine`, an application launcher and icon, the archive key, and `/etc/apt/sources.list.d/eglantine.list`. Updates use normal `apt update` and `apt upgrade`. AppImage updates use AppImageUpdate; the emulator's own upstream update checker is disabled.
 
 APT metadata is signed with the locally generated archive key. **Back up `data/gnupg/` securely** and retain it across redeployments; losing it breaks trust for existing installations. Never publish that directory. Only the public key is mounted into the build container. Only the latest successful release is retained. After the complete replacement is signed and atomically published, older release directories (including their AppImages, ZIPs, sources, Debian packages and APT indexes) and abandoned staging artifacts are deleted. Failed builds preserve the current release. APT indexes contain only the latest Debian package. Clients using an old release URL or APT index during the switch may need to refresh and retry. Build logs and compiler/toolchain caches are retained.
 
 ## Builds
 
-Both platform builds reuse their persistent CMake/Ninja trees (`data/work/linux/linux` and `data/work/windows/windows`). Configuration runs on every attempt to pick up changed inputs; Ninja compiles only what changed. The first build starts with a fresh tree. If incremental configuration or compilation fails, the builder deletes only that platform's CMake build tree and retries configuration and compilation once. If the clean retry also fails, the build is marked failed and current downloads remain available.
+The Linux build reuses its persistent CMake/Ninja tree (`data/work/linux/linux`). Configuration runs on every attempt to pick up changed inputs; Ninja compiles only what changed. The first build starts with a fresh tree. If incremental configuration or compilation fails, the builder deletes only the Linux CMake build tree and retries once. If the clean retry also fails, the build is marked failed and current downloads remain available.
 
-Dependency downloads, ccache, Qt and the MXE toolchain persist across clean retries. Packaging always runs after successful compilation to create current versioned artifacts. A packaging or Docker startup error does not trigger a clean compilation, since deleting compiler outputs would not fix those errors. Logs identify incremental, first full, and fallback attempts.
+Dependency downloads, ccache and Qt persist across clean retries. Packaging runs after successful compilation. A packaging or Docker startup error does not trigger a clean compilation. Logs identify incremental, first full, and fallback attempts.
 
-`builder/linux.sh` follows upstream's CMake and linuxdeploy approach, using Qt 6.8.3 on Ubuntu 24.04. The `.deb` wraps the same bundled AppDir, so it does not depend on the distribution's older Qt. `builder/windows.sh` uses the pinned MXE compiler and prefers validated official prebuilt Windows MinGW Qt libraries, then recursively bundles DLL dependencies and Qt plugins into the ZIP. Neither build enables PGO. Toolchain source pinning is in the Windows script; linuxdeploy's continuous tools and upstream dependencies may need maintenance over time.
+`builder/linux.sh` follows upstream's CMake and linuxdeploy approach, using Qt 6.8.3 on Ubuntu 24.04. The `.deb` wraps the same bundled AppDir, so it does not depend on the distribution's older Qt. AppImage, `.deb`, source archive, checksums and signed APT metadata become available together as soon as Linux packaging finishes. There is no Windows build or download.
 
-### Prebuilt Windows libraries
+When updating an existing server, stop the old worker before replacing its service definition, so any active old Windows build is stopped as well:
 
-Windows builds prefer official Qt **6.8.3 MinGW** libraries (Widgets, Charts and their Qt dependencies), with matching Linux Qt 6.8.3 host tools downloaded through [aqtinstall](https://aqtinstall.readthedocs.io/en/latest/cli.html). This version matches the Qt version already used by the Linux recipe. Windows Qt 6.12.0 was not available through the tested Windows repository, so the optimized native/source Qt 6.12 setup remains the fallback.
+```sh
+sudo systemctl stop eglantine-worker
+sudo -u apps git -C /opt/apps/eglantine.jvrcruz.games pull --ff-only
+cd /opt/apps/eglantine.jvrcruz.games
+sudo install -m 0644 deploy/eglantine-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start eglantine-worker
+```
 
-`WINDOWS_PREBUILT_LIBS=1` is the default. The builder first prepares only the core MXE dependencies, without Qt, then downloads/reuses the prebuilt kit. Before using it, it compiles and links a Qt Widgets/Charts application with automatic MOC and verifies its recursive DLL dependencies. A missing download, wrong host version, failed probe or application compilation failure selects source-built Qt automatically. `WINDOWS_PREBUILT_LIBS=0` forces the source path. Incremental compilation and its clean retry still apply to each path.
-
-The upstream SDL3 prebuilt bundle remains enabled. Boost, OpenSSL, Opus, USB and AV1-enabled FFmpeg keep the cached MXE source path; no compatible prebuilt artifact is assumed for those packages. In particular, the discovered upstream MinGW FFmpeg bundle does not establish the AV1 support needed by nx2, and the AV1-specific Windows bundle is for MSVC.
-
-Packaging starts in a separate clean directory, includes `nx2_switches.txt`, copies Qt plugins from the selected kit, and resolves DLLs from that same kit. The compiler's own MinGW C++ runtime DLLs take precedence over those shipped with the Qt kit. This avoids mixing previously deployed Qt versions in the ZIP. The probe tests compile/link and dependency closure; it is not a full Windows emulator runtime test.
-
-### MinGW toolchain performance
-
-A cold Windows build first prepares GCC, Qt and its dependencies. In the supplied server log, completed preparation packages took about 193 minutes before the Windows Qt build finished; GCC alone took 44 minutes, native CMake 22 minutes and native Qt 42 minutes. These are bootstrap costs, separate from compiling Eglantine.
-
-When the source Qt fallback is needed, the optimized setup:
-
-- Reuses the builder image's preinstalled native CMake instead of compiling another copy.
-- Downloads official native Qt 6.12.0 tools rather than compiling host Qt. Host and target Qt versions match, as required by [Qt's cross-compilation guide](https://doc.qt.io/qt-6/cross-compiling-qt.html). Download or validation failure falls back to the source build. `MXE_PREBUILT_HOST_QT=0` opts out.
-- Builds fresh Windows Qt without unused SQL, DBus, GLib, ICU, Mesa or external font-library dependency chains. Widgets, Charts, OpenGL and TLS remain enabled. Already compiled Qt is preserved.
-- Limits a fresh Boost build to the libraries needed by the application and MXE's checks. Already compiled Boost is preserved.
-- Changes recipes only when their contents change and avoids resetting the checkout on every build. This prevents timestamp-driven rebuilds of otherwise unchanged packages.
-- Records a completed toolchain fingerprint and reuses it on later builds, while retaining all caches if setup is interrupted. Also includes the missing dav1d recipe for AV1 and selects the supported `libusb1` package.
-
-Local verification completed toolchain preparation, cross-linked a Qt Widgets/Charts test executable, and measured a repeated ready-toolchain check at 0.44 seconds. The official native Qt download and validation took about 42 seconds. These measurements cover setup steps, not an end-to-end cold Windows build or your server.
-
-Keep `data/mxe/` and `data/cache/` across restarts and deployments. Artifact cleanup does not delete them. Updating this setup preserves completed Qt, GCC and Boost; it does not deliberately restart those expensive builds. A previously unfinished package may still need to finish its initial compilation. There is no measured guarantee for total build duration on your server. Increase `BUILD_JOBS` only when CPU and memory allow; the worker still clamps it to the daemon CPU count.
+Existing MinGW caches are no longer mounted or used. Successful publication removes superseded release artifacts, including legacy Windows ZIPs. Build logs and cached data remain separate from published artifacts.
 
 Publication stages the files, generates hashes and APT metadata, signs the repository, then atomically switches `data/public/current`. The HTTP server supports byte ranges for delta downloads and does not expose private state or directory listings. The source archive contains the application checkout, fetched application dependencies, and builder scripts; toolchain caches are kept separately.
 

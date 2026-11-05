@@ -28,7 +28,7 @@ def initialize_key():
 def publish(staging: Path, sha: str, version: str):
     home = initialize_key()
     artifacts = ('Eglantine-x86_64.AppImage', 'Eglantine-x86_64.AppImage.zsync',
-                 'eglantine_amd64.deb', 'Eglantine-Windows-x86_64.zip', 'source.tar.gz')
+                 'eglantine_amd64.deb', 'source.tar.gz')
     for name in artifacts:
         if not (staging / name).is_file() or not (staging / name).stat().st_size:
             raise RuntimeError(f'Missing artifact: {name}')

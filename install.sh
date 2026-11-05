@@ -22,7 +22,7 @@ TimeoutStopSec=60
 WantedBy=default.target
 UNIT
  if [[ "$unit" = worker ]]; then
-  sed -i '/RestartSec=15/a ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-linux eglantine-build-windows' "$HOME/.config/systemd/user/eglantine-$unit.service"
+  sed -i '/RestartSec=15/a ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-linux' "$HOME/.config/systemd/user/eglantine-$unit.service"
  fi
 done
 systemctl --user daemon-reload
