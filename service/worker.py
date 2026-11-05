@@ -23,6 +23,16 @@ def now(): return dt.datetime.now(dt.timezone.utc).isoformat()
 def call(args, log=None, **kw):
     return subprocess.run(args, check=True, stdout=log, stderr=subprocess.STDOUT if log else None, **kw)
 
+def needs_build(previous, sha, current_time, rebuild_seconds):
+    if previous.get('last_success') != sha:
+        return True
+    try:
+        last_start = dt.datetime.fromisoformat(previous['last_success_started_at'])
+        return (current_time - last_start).total_seconds() >= rebuild_seconds
+    except (KeyError, ValueError, TypeError):
+        return True
+
+
 def build(sha):
     version = dt.datetime.now(dt.timezone.utc).strftime('0~nx2.%Y%m%d%H%M%S') + '+' + sha[:12]
     logs = DATA / 'public/logs'
@@ -31,7 +41,8 @@ def build(sha):
     source = DATA / 'source'
     staging = DATA / 'staging' / version
     staging.mkdir(parents=True)
-    state(phase='building', commit=sha, started_at=now(), log=f'/logs/{logname}', error=None)
+    started_at = now()
+    state(phase='building', commit=sha, started_at=started_at, log=f'/logs/{logname}', error=None)
     with (logs / logname).open('w', buffering=1) as log:
         if not (source / '.git').exists():
             call(['git', 'clone', '--depth', '1', '--no-checkout', '--branch', BRANCH, UPSTREAM, str(source)], log)
@@ -59,7 +70,7 @@ def build(sha):
               '-C', str(DATA), 'source', '-C', str(ROOT), 'builder'], log)
         release = publish(staging, sha, version)
     state(phase='ready', platform=None, last_success=sha, release=release['version'],
-          finished_at=now(), error=None)
+          finished_at=now(), last_success_started_at=started_at, error=None)
 
 def main():
     DATA.mkdir(parents=True, exist_ok=True)
@@ -67,6 +78,7 @@ def main():
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     initialize_key()
     interval = int(os.environ.get('POLL_SECONDS', '120'))
+    rebuild_seconds = max(1, int(os.environ.get('REBUILD_SECONDS', '3600')))
     while True:
         try:
             result = subprocess.check_output(['git', 'ls-remote', UPSTREAM, f'refs/heads/{BRANCH}'],
@@ -76,7 +88,7 @@ def main():
             sha = result[0]
             previous = json.loads(STATE.read_text()) if STATE.exists() else {}
             state(checked_at=now(), upstream_commit=sha)
-            if previous.get('last_success') != sha:
+            if needs_build(previous, sha, dt.datetime.now(dt.timezone.utc), rebuild_seconds):
                 build(sha)
             elif previous.get('phase') != 'ready': state(phase='ready', error=None)
         except Exception as exc:

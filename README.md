@@ -1,6 +1,6 @@
 # Eglantine nx2 build distribution
 
-A local build worker watches `https://github.com/Djihads80/Eglantine`, branch `nx2`, every two minutes. It compiles Linux x86_64 and cross-compiles Windows x86_64 with MinGW using MXE. Only a complete set of packages is published. A failure leaves the previous release available and retries after 30 minutes. No GitHub credentials or upstream changes are needed.
+A local build worker watches `https://github.com/Djihads80/Eglantine`, branch `nx2`, every two minutes. It also rebuilds unchanged source every hour (configurable with `REBUILD_SECONDS=3600`), measured from the start of the last successful build. Builds never overlap; when a build takes over an hour, the next hourly build runs after it finishes and the next poll. It compiles Linux x86_64 and cross-compiles Windows x86_64 with MinGW using MXE. Only a complete set of packages is published. A failure leaves the previous release available and retries after 30 minutes. No GitHub credentials or upstream changes are needed.
 
 ## Run
 
@@ -76,7 +76,7 @@ Create DNS records for `eglantine.jvrcruz.games` pointing to this server, then p
 
 Install the downloaded Debian package with `sudo apt install ./eglantine_amd64.deb`. It installs `/usr/bin/eglantine`, a bundled application under `/opt/eglantine`, an application launcher and icon, the archive key, and `/etc/apt/sources.list.d/eglantine.list`. Updates use normal `apt update` and `apt upgrade`. AppImage updates use AppImageUpdate; the emulator's own upstream update checker is disabled. Windows ZIP updates are manual.
 
-APT metadata is signed with the locally generated archive key. **Back up `data/gnupg/` securely** and retain it across redeployments; losing it breaks trust for existing installations. Never publish that directory. Only the public key is mounted into the build container. Previous packages and by-hash indexes are retained, so clients can finish downloads during a release switch. No automatic retention policy deletes releases; monitor disk use.
+APT metadata is signed with the locally generated archive key. **Back up `data/gnupg/` securely** and retain it across redeployments; losing it breaks trust for existing installations. Never publish that directory. Only the public key is mounted into the build container. Only the latest successful release is retained. After the complete replacement is signed and atomically published, older release directories (including their AppImages, ZIPs, sources, Debian packages and APT indexes) and abandoned staging artifacts are deleted. Failed builds preserve the current release. APT indexes contain only the latest Debian package. Clients using an old release URL or APT index during the switch may need to refresh and retry. Build logs and compiler/toolchain caches are retained.
 
 ## Builds
 
@@ -93,4 +93,4 @@ bash -n builder/*.sh install.sh
 node --check web/app.js
 ```
 
-Integration tests generate two signed test repositories and verify signatures, retained packages, atomic publication, failed-release preservation, HTTP ranges, HEAD requests and path traversal rejection. They use temporary data and do not publish test artifacts to the running site.
+Integration tests generate two signed test repositories and verify signatures, removal of superseded packages, atomic publication, failed-release preservation, HTTP ranges, HEAD requests and path traversal rejection. They use temporary data and do not publish test artifacts to the running site.

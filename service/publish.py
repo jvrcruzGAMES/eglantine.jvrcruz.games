@@ -39,8 +39,6 @@ def publish(staging: Path, sha: str, version: str):
     snapshot = staging / 'site'
     snapshot.mkdir()
     apt = snapshot / 'apt'
-    previous = DATA / 'public/current/apt'
-    if previous.exists(): shutil.copytree(previous, apt, copy_function=os.link)
     pool = apt / 'pool/main/e/eglantine'
     pool.mkdir(parents=True, exist_ok=True)
     debname = f'eglantine_{version}_amd64.deb'
@@ -48,7 +46,6 @@ def publish(staging: Path, sha: str, version: str):
     binary = apt / 'dists/stable/main/binary-amd64'
     binary.mkdir(parents=True, exist_ok=True)
     packages = run('apt-ftparchive', 'packages', 'pool', cwd=apt)
-    # Replace files rather than writing through hardlinks into previous snapshots.
     for name, content in [('Packages', packages), ('Packages.gz', gzip.compress(packages, mtime=0))]:
         tmp = binary / (name + '.tmp')
         tmp.write_bytes(content)
@@ -93,4 +90,13 @@ def publish(staging: Path, sha: str, version: str):
     temp.unlink(missing_ok=True)
     temp.symlink_to(Path('releases') / version / 'site')
     temp.replace(public / 'current')
+    # Cleanup only after the complete, signed replacement is publicly available.
+    for old in releases.iterdir():
+        if old != target and old.is_dir():
+            shutil.rmtree(old)
+    staging_root = DATA / 'staging'
+    if staging_root.exists():
+        for old in staging_root.iterdir():
+            if old.is_dir():
+                shutil.rmtree(old)
     return manifest

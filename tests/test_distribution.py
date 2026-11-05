@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'service'))
 import config
 import publish
@@ -46,7 +47,6 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(json.loads(self.request('/api/status')[2])['latest'], None)
         one = publish.publish(self.stage('0~nx2.1+abc'), 'a'*40, '0~nx2.1+abc')
         first = (self.data / 'public/current').resolve()
-        original = (first / 'apt/dists/stable/main/binary-amd64/Packages').read_bytes()
         subprocess.run(['gpg', '--homedir', str(self.data / 'gnupg'), '--verify', str(first / 'apt/dists/stable/InRelease')], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         url = one['artifacts'][0]['url']
         status, headers, content = self.request(url, {'Range':'bytes=2-5'})
@@ -62,9 +62,16 @@ class DistributionTests(unittest.TestCase):
         self.assertIn(b'\r\n\r\n89\r\n',content)
         self.assertEqual(self.request('/releases/%2e%2e/%2e%2e/gnupg/pubring.kbx')[0],404)
         self.assertEqual(self.request('/updates/Eglantine-x86_64.AppImage')[2],b'0123456789')
+        abandoned = self.stage('0~nx2.failed')
         publish.publish(self.stage('0~nx2.2+def'), 'b'*40, '0~nx2.2+def')
-        self.assertEqual((first / 'apt/dists/stable/main/binary-amd64/Packages').read_bytes(),original)
-        self.assertEqual(len(list((self.data / 'public/current/apt/pool/main/e/eglantine').glob('*.deb'))),2)
+        self.assertFalse(abandoned.exists())
+        self.assertFalse(first.exists())
+        self.assertEqual(self.request(url)[0], 404)
+        self.assertEqual(len(list((self.data / 'public/releases').iterdir())), 1)
+        self.assertEqual(len(list((self.data / 'public/current/apt/pool/main/e/eglantine').glob('*.deb'))),1)
+        packages = (self.data / 'public/current/apt/dists/stable/main/binary-amd64/Packages').read_text()
+        self.assertIn('0~nx2.2+def', packages)
+        self.assertNotIn('0~nx2.1+abc', packages)
         latest = json.loads(self.request('/api/status')[2])['latest']
         self.assertEqual(latest['commit'], 'b'*40)
         aptroot = self.data / 'client'
@@ -80,6 +87,17 @@ class DistributionTests(unittest.TestCase):
         policy = subprocess.check_output(['apt-cache', *options, 'policy', 'eglantine'], text=True)
         self.assertIn('Candidate: 0~nx2.2+def', policy)
 
+        failed = self.stage('0~nx2.3+ghi')
+        real_run = publish.run
+        def fail_signing(*args, **kwargs):
+            if '--clearsign' in args:
+                raise subprocess.CalledProcessError(1, args)
+            return real_run(*args, **kwargs)
+        with patch.object(publish, 'run', side_effect=fail_signing):
+            with self.assertRaises(subprocess.CalledProcessError):
+                publish.publish(failed, 'c'*40, '0~nx2.3+ghi')
+        self.assertEqual(len(list((self.data / 'public/releases').iterdir())), 1)
+        self.assertEqual(self.request('/updates/Eglantine-x86_64.AppImage')[0], 200)
         with self.assertRaises(RuntimeError): publish.publish(self.data / 'missing', 'c'*40, '0~nx2.3')
         self.assertEqual(json.loads(self.request('/api/status')[2])['latest']['commit'],'b'*40)
 
