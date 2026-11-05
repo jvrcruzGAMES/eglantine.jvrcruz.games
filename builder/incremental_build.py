@@ -9,8 +9,8 @@ import sys
 
 def build(build_dir, configure):
     build_dir = Path(build_dir).absolute()
-    if build_dir.is_symlink() or build_dir.parent == build_dir or build_dir.name != 'linux':
-        raise ValueError('Expected a dedicated linux build directory')
+    if build_dir.is_symlink() or build_dir.parent == build_dir or build_dir.name not in ('linux', 'windows'):
+        raise ValueError('Expected a dedicated linux or windows build directory')
     had_state = build_dir.exists() and any(build_dir.iterdir())
 
     def attempt():

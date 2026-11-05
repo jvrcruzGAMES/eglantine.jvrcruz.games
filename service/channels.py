@@ -11,11 +11,16 @@ class Channel:
     directory: str = ''
     prefix: str = ''
 
-    def storage(self, root):
-        return root / self.directory if self.directory else root
+    def storage(self, root, platform='linux'):
+        data = root / self.directory if self.directory else root
+        return data / 'windows' if platform == 'windows' else data
+
+    @property
+    def installer(self):
+        return self.package + '-Windows-x86_64-Setup.exe'
 
     def public(self):
-        return asdict(self)
+        return dict(asdict(self), installer=self.installer)
 
 
 STABLE = Channel('stable', 'nx2', 'eglantine', 'Eglantine', 'Eglantine-x86_64.AppImage')

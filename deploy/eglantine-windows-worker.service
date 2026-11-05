@@ -1,0 +1,21 @@
+[Unit]
+Description=Eglantine asynchronous Windows build watcher
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=apps
+WorkingDirectory=/opt/apps/eglantine.jvrcruz.games
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/apps/eglantine.jvrcruz.games/.env
+Environment=BUILD_PLATFORM=windows
+ExecStart=/usr/bin/python3 /opt/apps/eglantine.jvrcruz.games/service/worker.py
+ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-windows eglantine-nightly-build-windows
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

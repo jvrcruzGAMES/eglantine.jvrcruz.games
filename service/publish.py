@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from config import DATA, PUBLIC_URL
-from channels import STABLE
+from channels import STABLE, CHANNELS
 
 def run(*args, **kw):
     return subprocess.check_output(args, **kw)
@@ -45,6 +45,15 @@ def publish(staging: Path, sha: str, version: str, channel=STABLE):
     pool.mkdir(parents=True, exist_ok=True)
     debname = f'{channel.package}_{version}_amd64.deb'
     shutil.copy2(staging / f'{channel.package}_amd64.deb', pool / debname)
+    for other in CHANNELS:
+        if other == channel: continue
+        current = other.storage(DATA) / 'public/current/release.json'
+        if not current.exists(): continue
+        previous = json.loads(current.read_text())
+        source = other.storage(DATA) / 'public/releases' / previous['version'] / (other.package + '_amd64.deb')
+        destination = apt / f'pool/main/e/{other.package}/{other.package}_{previous["version"]}_amd64.deb'
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
     binary = apt / 'dists/stable/main/binary-amd64'
     binary.mkdir(parents=True, exist_ok=True)
     packages = run('apt-ftparchive', 'packages', 'pool', cwd=apt)
@@ -62,7 +71,7 @@ def publish(staging: Path, sha: str, version: str, channel=STABLE):
         (dist / name).unlink(missing_ok=True)
     release = run('apt-ftparchive',
         '-o', 'APT::FTPArchive::Release::Origin=Eglantine',
-        '-o', f'APT::FTPArchive::Release::Label={channel.title} {channel.branch}',
+        '-o', 'APT::FTPArchive::Release::Label=Eglantine',
         '-o', 'APT::FTPArchive::Release::Suite=stable',
         '-o', 'APT::FTPArchive::Release::Codename=stable',
         '-o', 'APT::FTPArchive::Release::Architectures=amd64',
@@ -92,6 +101,11 @@ def publish(staging: Path, sha: str, version: str, channel=STABLE):
     temp.unlink(missing_ok=True)
     temp.symlink_to(Path('releases') / version / 'site')
     temp.replace(public / 'current')
+    shared = DATA / 'public/shared-apt.next'
+    shared.parent.mkdir(parents=True, exist_ok=True)
+    shared.unlink(missing_ok=True)
+    shared.symlink_to((target / 'site/apt').resolve())
+    shared.replace(DATA / 'public/shared-apt')
     # Cleanup only after the complete, signed replacement is publicly available.
     for old in releases.iterdir():
         if old != target and old.is_dir():

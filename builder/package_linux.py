@@ -46,14 +46,15 @@ def package_deb(source, work, out, keys, meta, version, public_url):
         desktop_text(source / 'dist/dev.eden_emu.eden.desktop', meta, package))
     shutil.copy2(source / 'dist/Eglantine.png', root / f'usr/share/icons/hicolor/256x256/apps/{meta["icon"]}.png')
     shutil.copy2(source / 'LICENSE.txt', root / f'usr/share/doc/{package}/copyright')
-    keyname = package + '-archive-keyring.gpg'
+    keyname = 'eglantine-archive-keyring.gpg'
     shutil.copy2(keys / 'eglantine-archive-keyring.gpg', root / f'usr/share/keyrings/{keyname}')
-    (root / f'etc/apt/sources.list.d/{package}.list').write_text(
-        f'deb [arch=amd64 signed-by=/usr/share/keyrings/{keyname}] {public_url}{meta["prefix"]}/apt stable main\n')
+    (root / 'etc/apt/sources.list.d/eglantine.list').write_text(
+        f'deb [arch=amd64 signed-by=/usr/share/keyrings/{keyname}] {public_url}/apt stable main\n')
     (root / 'DEBIAN/control').write_text(f'''Package: {package}
 Version: {version}
 Section: games
 Priority: optional
+Conflicts: {'eglantine-nightly' if package == 'eglantine' else 'eglantine'}
 Architecture: amd64
 Maintainer: Eglantine builds <builds@jvrcruz.games>
 Depends: libc6 (>= 2.39), libstdc++6, libgl1, libegl1, libvulkan1, libx11-6, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libxcb-cursor0

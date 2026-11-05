@@ -12,9 +12,13 @@ else
  icon=dev.eglantine.eglantine
  channel_path=
 fi
-if [[ ! -x /cache/qt/6.8.3/gcc_64/bin/qmake ]]; then
- aqt install-qt linux desktop 6.8.3 linux_gcc_64 -m qtcharts -O /cache/qt
-fi
+(
+ flock 8
+ # Windows needs only native Qt tools; Linux also needs the Charts libraries.
+ if [[ ! -x /cache/qt/6.8.3/gcc_64/bin/qmake || ! -f /cache/qt/6.8.3/gcc_64/lib/cmake/Qt6Charts/Qt6ChartsConfig.cmake ]]; then
+  aqt install-qt linux desktop 6.8.3 linux_gcc_64 -m qtcharts -O /cache/qt
+ fi
+) 8>/cache/.qt-download.lock
 export QT_ROOT_DIR=/cache/qt/6.8.3/gcc_64
 export PATH="$QT_ROOT_DIR/bin:$PATH"
 export LD_LIBRARY_PATH="$QT_ROOT_DIR/lib:${LD_LIBRARY_PATH:-}"

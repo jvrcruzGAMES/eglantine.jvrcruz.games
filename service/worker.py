@@ -2,6 +2,7 @@
 import datetime as dt
 import fcntl
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -12,8 +13,12 @@ from config import DATA, ROOT, UPSTREAM, PUBLIC_URL
 from channels import CHANNELS, STABLE
 from publish import initialize_key, publish
 
+PLATFORM = os.environ.get('BUILD_PLATFORM', 'linux')
+if PLATFORM not in ('linux', 'windows'):
+    raise ValueError('BUILD_PLATFORM must be linux or windows')
+
 def state(channel=STABLE, **changes):
-    path = channel.storage(DATA) / 'status.json'
+    path = channel.storage(DATA, PLATFORM) / 'status.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     old = json.loads(path.read_text()) if path.exists() else {}
     old.update(changes)
@@ -46,15 +51,33 @@ def docker_resources(log):
     available = int(info['NCPU'])
     if available < 1:
         raise ValueError('Docker daemon CPU count must be positive')
-    jobs = min(max(1, int(os.environ.get('BUILD_JOBS', '6'))), available)
-    memory = os.environ.get('BUILD_MEMORY')
+    jobs_setting = os.environ.get('WINDOWS_BUILD_JOBS', '3') if PLATFORM == 'windows' else os.environ.get('BUILD_JOBS', '6')
+    jobs = min(max(1, int(jobs_setting)), available)
+    memory = os.environ.get('WINDOWS_BUILD_MEMORY') if PLATFORM == 'windows' else os.environ.get('BUILD_MEMORY')
     if not memory:
-        memory = str(min(10 * 1024**3, int(info['MemTotal'] * 0.75)))
+        # Leave host headroom when the two platform workers build concurrently.
+        memory = str(min((8 if PLATFORM == 'windows' else 10) * 1024**3, int(info['MemTotal'] * (0.30 if PLATFORM == 'windows' else 0.60))))
     log.write(f'Docker build resources: jobs={jobs}, memory={memory} (daemon CPUs={available})\n')
     log.flush()
     return jobs, memory
 
-def needs_build(previous, sha, current_time, rebuild_seconds):
+def builder_revision():
+    names = ['builder/common.sh', 'builder/incremental_build.py', 'service/channels.py']
+    if PLATFORM == 'linux':
+        names += ['builder/linux.sh', 'builder/package_linux.py', 'builder/Dockerfile', 'service/publish.py']
+    else:
+        names += [str(p.relative_to(ROOT)) for p in (ROOT / 'builder').iterdir() if p.is_file()]
+        names += [str(p.relative_to(ROOT)) for p in (ROOT / 'windows').iterdir() if p.is_file()]
+        names += ['service/publish_windows.py']
+    digest = hashlib.sha256(PUBLIC_URL.encode())
+    for name in sorted(set(names)):
+        digest.update(name.encode()); digest.update((ROOT / name).read_bytes())
+    return digest.hexdigest()
+
+
+def needs_build(previous, sha, current_time, rebuild_seconds, revision=None):
+    if revision is not None and previous.get('builder_revision') != revision:
+        return True
     if previous.get('last_success') != sha:
         return True
     try:
@@ -65,7 +88,7 @@ def needs_build(previous, sha, current_time, rebuild_seconds):
 
 
 def build(sha, channel=STABLE):
-    data = channel.storage(DATA)
+    data = channel.storage(DATA, PLATFORM)
     version = dt.datetime.now(dt.timezone.utc).strftime('0~' + ('nx2' if channel.name == 'stable' else 'nightly') + '.%Y%m%d%H%M%S') + '+' + sha[:12]
     logs = data / 'public/logs'
     logs.mkdir(parents=True, exist_ok=True)
@@ -74,16 +97,19 @@ def build(sha, channel=STABLE):
     staging = data / 'staging' / version
     staging.mkdir(parents=True)
     started_at = now()
-    state(channel, phase='building', platform='linux', commit=sha, started_at=started_at, log=f'{channel.prefix}/logs/{logname}', error=None)
+    revision = builder_revision()
+    state(channel, phase='building', platform=PLATFORM, commit=sha, started_at=started_at, log=f'{channel.prefix}' + ('/windows' if PLATFORM == 'windows' else '') + f'/logs/{logname}', error=None)
     with (logs / logname).open('w', buffering=1) as log:
         if not (source / '.git').exists():
             call(['git', 'clone', '--depth', '1', '--no-checkout', '--branch', channel.branch, UPSTREAM, str(source)], log)
         call(['git', '-C', str(source), 'fetch', 'origin', channel.branch], log)
         call(['git', '-C', str(source), 'checkout', '--force', sha], log)
         call(['git', '-C', str(source), 'submodule', 'update', '--init', '--recursive'], log)
-        call(['docker', 'build', '-t', 'eglantine-builder:local', str(ROOT / 'builder')], log)
+        image = 'eglantine-windows-builder:local' if PLATFORM == 'windows' else 'eglantine-builder:local'
+        image_args = ['-f', str(ROOT / 'builder/Dockerfile.windows')] if PLATFORM == 'windows' else []
+        call(['docker', 'build', *image_args, '-t', image, str(ROOT / 'builder')], log)
         jobs, memory = docker_resources(log)
-        for platform in ('linux',):
+        for platform in (PLATFORM,):
             state(channel, platform=platform)
             work = data / 'work' / platform
             cache = DATA / 'cache'
@@ -93,22 +119,31 @@ def build(sha, channel=STABLE):
                   '-e', f'PUBLIC_URL={PUBLIC_URL}', '-e', f'PACKAGE_VERSION={version}',
                   '-e', f'BUILD_JOBS={jobs}',
                   '-e', f'PACKAGE_NAME={channel.package}',
+                  '-e', f'BUILD_CHANNEL={channel.name}',
+                  '-e', f'WINDOWS_PREBUILT_LIBS={os.environ.get("WINDOWS_PREBUILT_LIBS", "1")}',
+                  *(['-v', f'{DATA / "mxe"}:/opt/mxe'] if PLATFORM == 'windows' else []),
                   '-v', f'{source}:/source', '-v', f'{work}:/work',
                   '-v', f'{cache}:/cache',
-                  '-v', f'{staging}:/out', '-v', f'{DATA / "keys"}:/keys:ro',
+                  '-v', f'{staging}:/out',
+                  *(['-v', f'{DATA / "keys"}:/keys:ro'] if PLATFORM == 'linux' else []),
                   '-v', f'{ROOT / "builder"}:/scripts:ro',
-                  'eglantine-builder:local', 'bash', f'/scripts/{platform}.sh'], log)
+                  *(['-v', f'{ROOT / "windows"}:/harness:ro'] if PLATFORM == 'windows' else []),
+                  image, 'bash', f'/scripts/{platform}.sh'], log)
         # Include the exact checkout, fetched dependency sources and build instructions.
         call(['tar', '--exclude=.git', '--exclude=__pycache__', '--exclude=*.pyc', '-czf', str(staging / 'source.tar.gz'),
-              '-C', str(data), 'source', '-C', str(ROOT), 'builder'], log)
-        release = publish(staging, sha, version, channel)
+              '-C', str(data), 'source', '-C', str(ROOT), 'builder', *(['windows'] if PLATFORM == 'windows' else [])], log)
+        if PLATFORM == 'windows':
+            from publish_windows import publish_windows
+            release = publish_windows(staging, sha, version, channel)
+        else:
+            release = publish(staging, sha, version, channel)
     state(channel, phase='ready', platform=None, last_success=sha, release=release['version'],
-          finished_at=now(), last_success_started_at=started_at, error=None, retry_at=None)
+          finished_at=now(), last_success_started_at=started_at, error=None, retry_at=None, builder_revision=revision)
 
 def poll_channels(rebuild_seconds):
     for channel in CHANNELS:
         try:
-            path = channel.storage(DATA) / 'status.json'
+            path = channel.storage(DATA, PLATFORM) / 'status.json'
             previous = json.loads(path.read_text()) if path.exists() else {}
             if previous.get('retry_at') and dt.datetime.fromisoformat(previous['retry_at']) > dt.datetime.now(dt.timezone.utc):
                 continue
@@ -118,7 +153,7 @@ def poll_channels(rebuild_seconds):
                 raise RuntimeError(f'Upstream branch {channel.branch} returned no commit')
             sha = result[0]
             state(channel, checked_at=now(), upstream_commit=sha)
-            if needs_build(previous, sha, dt.datetime.now(dt.timezone.utc), rebuild_seconds):
+            if needs_build(previous, sha, dt.datetime.now(dt.timezone.utc), rebuild_seconds, builder_revision()):
                 build(sha, channel)
             elif previous.get('phase') != 'ready':
                 state(channel, phase='ready', error=None)
@@ -129,9 +164,9 @@ def poll_channels(rebuild_seconds):
 
 def main():
     DATA.mkdir(parents=True, exist_ok=True)
-    lock = (DATA / 'worker.lock').open('w')
+    lock = (DATA / ('worker-windows.lock' if PLATFORM == 'windows' else 'worker.lock')).open('w')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    initialize_key()
+    if PLATFORM == 'linux': initialize_key()
     interval = int(os.environ.get('POLL_SECONDS', '120'))
     rebuild_seconds = max(1, int(os.environ.get('REBUILD_SECONDS', '3600')))
     while True:

@@ -29,7 +29,18 @@ class DockerStartupTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), patch('worker.subprocess.check_output', return_value=info):
             jobs, memory = docker_resources(io.StringIO())
         self.assertEqual(jobs, 2)
-        self.assertEqual(int(memory), 3 * 1024**3)
+        self.assertEqual(int(memory), int(4 * 1024**3 * 0.60))
+
+    def test_concurrent_platform_memory_budgets(self):
+        import worker
+        info = json.dumps({'NCPU': 4, 'MemTotal': 8 * 1024**3})
+        with patch.dict(os.environ, {}, clear=True), patch('worker.subprocess.check_output', return_value=info):
+            with patch.object(worker, 'PLATFORM', 'linux'):
+                linux = docker_resources(io.StringIO())
+            with patch.object(worker, 'PLATFORM', 'windows'):
+                windows = docker_resources(io.StringIO())
+        self.assertEqual(windows[0], 3)
+        self.assertLess(int(linux[1]) + int(windows[1]), 8 * 1024**3)
 
     def test_resource_overrides(self):
         info = json.dumps({'NCPU': 4, 'MemTotal': 16 * 1024**3})
@@ -57,7 +68,7 @@ class ChannelSchedulingTests(unittest.TestCase):
                 if channel == STABLE:
                     raise RuntimeError('stable build failed')
                 worker.state(channel, phase='ready', last_success=sha,
-                             last_success_started_at=worker.now())
+                             last_success_started_at=worker.now(), builder_revision=worker.builder_revision())
             with patch.object(worker.subprocess, 'check_output', side_effect=['a'*40 + '\trefs/heads/nx2', 'b'*40 + '\trefs/heads/nx2-experimental']) as remote, patch.object(worker, 'build', side_effect=fake_build) as builds:
                 worker.poll_channels(3600)
             self.assertEqual([call.args[1] for call in builds.call_args_list], [STABLE, NIGHTLY])

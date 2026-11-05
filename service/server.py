@@ -10,12 +10,14 @@ from urllib.parse import unquote, urlsplit
 from config import DATA, ROOT
 from channels import CHANNELS, STABLE, NIGHTLY
 
-def channel_status(channel):
-    data = channel.storage(DATA)
+def channel_status(channel, platform='linux'):
+    data = channel.storage(DATA, platform)
     state = json.loads((data / 'status.json').read_text()) if (data / 'status.json').exists() else {'phase':'waiting'}
     release = data / 'public/current/release.json'
     state['latest'] = json.loads(release.read_text()) if release.exists() else None
     state['definition'] = channel.public()
+    if platform == 'linux':
+        state['platforms'] = {'linux': dict(state), 'windows': channel_status(channel, 'windows')}
     return state
 
 
@@ -33,10 +35,12 @@ class Handler(SimpleHTTPRequestHandler):
         channel = NIGHTLY if path.startswith('/nightly/') else STABLE
         if channel is NIGHTLY:
             path = path[len(channel.prefix):]
-        data = channel.storage(DATA)
+        platform = 'windows' if path.startswith('/windows/') else 'linux'
+        if platform == 'windows': path = path[len('/windows'):]
+        data = channel.storage(DATA, platform)
         if path == '/api/status':
-            state = channel_status(channel)
-            if channel is STABLE:
+            state = channel_status(channel, platform)
+            if channel is STABLE and platform == 'linux':
                 state['channels'] = {item.name: channel_status(item) for item in CHANNELS}
             content = json.dumps(state).encode()
             self.send_response(200)
@@ -54,6 +58,8 @@ class Handler(SimpleHTTPRequestHandler):
             base = ROOT / 'web'; relative = 'index.html' if path == '/' else path[1:]
         elif path == '/eglantine-archive-keyring.gpg':
             base = DATA / 'keys'; relative = path[1:]
+        elif path.startswith('/apt/') and platform == 'linux' and (DATA / 'public/shared-apt').exists():
+            base = (DATA / 'public/shared-apt').resolve(); relative = path[len('/apt/'):]
         elif path.startswith(('/updates/', '/apt/')):
             base = (data / 'public/current').resolve(); relative = path[1:]
         elif path.startswith(('/releases/', '/logs/')):

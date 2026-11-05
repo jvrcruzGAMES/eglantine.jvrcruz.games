@@ -16,7 +16,7 @@ spec.loader.exec_module(package_linux)
 
 
 class LinuxPackageTests(unittest.TestCase):
-    def test_channels_install_without_file_conflicts(self):
+    def test_channels_have_distinct_files_but_conflict_by_package_name(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'source'
@@ -41,6 +41,8 @@ class LinuxPackageTests(unittest.TestCase):
                 deb = package_linux.package_deb(source, work, root / 'out', keys, meta, '0~test.1', 'https://example.test')
                 name = subprocess.check_output(['dpkg-deb', '-f', str(deb), 'Package'], text=True).strip()
                 self.assertEqual(name, channel.package)
+                conflicts = subprocess.check_output(['dpkg-deb','-f',str(deb),'Conflicts'],text=True).strip()
+                self.assertEqual(conflicts, 'eglantine-nightly' if channel.package == 'eglantine' else 'eglantine')
                 contents = subprocess.check_output(['dpkg-deb', '--fsys-tarfile', str(deb)])
                 with tarfile.open(fileobj=io.BytesIO(contents)) as archive:
                     files[channel.name] = {item.name for item in archive.getmembers() if item.isfile() or item.issym()}
@@ -50,9 +52,9 @@ class LinuxPackageTests(unittest.TestCase):
                 wrapper = (work / 'deb/usr/bin' / channel.package).read_text()
                 self.assertIn(f'/opt/{channel.package}/AppRun', wrapper)
                 self.assertTrue((work / f'deb/opt/{channel.package}/AppRun').is_symlink())
-                apt = (work / f'deb/etc/apt/sources.list.d/{channel.package}.list').read_text()
-                self.assertIn(f'https://example.test{channel.prefix}/apt', apt)
-                self.assertIn(f'/usr/share/keyrings/{channel.package}-archive-keyring.gpg', apt)
-            self.assertFalse(files['stable'] & files['nightly'])
+                apt = (work / 'deb/etc/apt/sources.list.d/eglantine.list').read_text()
+                self.assertIn('https://example.test/apt', apt)
+                self.assertIn('/usr/share/keyrings/eglantine-archive-keyring.gpg', apt)
+            self.assertEqual(files['stable'] & files['nightly'], {'./etc/apt/sources.list.d/eglantine.list', './usr/share/keyrings/eglantine-archive-keyring.gpg'})
 
 if __name__ == '__main__': unittest.main()

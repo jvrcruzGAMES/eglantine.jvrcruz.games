@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'service'))
 import config
 import publish
+import publish_windows
 import server
 from channels import STABLE, NIGHTLY
 
@@ -21,7 +22,7 @@ class DistributionTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         cls.data = Path(cls.temp.name)
-        publish.DATA = server.DATA = cls.data
+        publish.DATA = publish_windows.DATA = server.DATA = cls.data
         cls.http = server.ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
         threading.Thread(target=cls.http.serve_forever, daemon=True).start()
     @classmethod
@@ -36,16 +37,17 @@ class DistributionTests(unittest.TestCase):
     def stage(self, version, channel=STABLE):
         stage = channel.storage(self.data) / 'staging' / version
         stage.mkdir(parents=True)
+        other = 'eglantine-nightly' if channel.package == 'eglantine' else 'eglantine'
         root = self.data / ('deb-' + version)
         (root / 'DEBIAN').mkdir(parents=True)
-        (root / 'DEBIAN/control').write_text(f'Package: {channel.package}\nVersion: {version}\nArchitecture: amd64\nMaintainer: Test <test@example.com>\nDescription: Test\n')
+        (root / 'DEBIAN/control').write_text(f'Package: {channel.package}\nVersion: {version}\nArchitecture: amd64\nConflicts: {other}\nMaintainer: Test <test@example.com>\nDescription: Test\n')
         subprocess.run(['dpkg-deb','--build', str(root), str(stage / f'{channel.package}_amd64.deb')], check=True, stdout=subprocess.DEVNULL)
         for name in (channel.appimage, channel.appimage + '.zsync', 'source.tar.gz'):
             (stage / name).write_bytes(b'0123456789')
         return stage
     def test_distribution(self):
         self.assertEqual(self.request('/')[0], 200)
-        self.assertNotIn(b'Portable ZIP', self.request('/')[2])
+        self.assertIn(b'Windows installer', self.request('/')[2])
         self.assertEqual(json.loads(self.request('/api/status')[2])['latest'], None)
         one = publish.publish(self.stage('0~nx2.1+abc'), 'a'*40, '0~nx2.1+abc')
         self.assertNotIn('Eglantine-Windows-x86_64.zip', {a['name'] for a in one['artifacts']})
@@ -128,14 +130,60 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(json.loads(self.request('/api/status')[2])['latest']['commit'], 'e'*40)
         nightly_packages = (self.data / 'nightly/public/current/apt/dists/stable/main/binary-amd64/Packages').read_text()
         self.assertIn('Package: eglantine-nightly\n', nightly_packages)
-        self.assertNotIn('Package: eglantine\n', nightly_packages)
-        # A real APT client can use both signed repositories and sees distinct packages.
+        self.assertIn('Package: eglantine\n', nightly_packages)
+        self.assertIn(b'Package: eglantine-nightly\n', self.request('/apt/dists/stable/main/binary-amd64/Packages')[2])
+        # One canonical signed repository offers both packages.
+        subprocess.run(['apt-get', *options, 'update'], check=True, stdout=subprocess.DEVNULL)
+        policy = subprocess.check_output(['apt-cache', *options, 'policy', 'eglantine', 'eglantine-nightly'], text=True)
+        self.assertIn('Candidate: 0~nx2.4+eee', policy)
+        self.assertIn('Candidate: 0~nightly.2+fff', policy)
+        # The old nightly repository address remains a compatible alias.
         with sources.open('a') as file:
             file.write(f'deb [signed-by={self.data}/keys/eglantine-archive-keyring.gpg] http://127.0.0.1:{self.http.server_port}/nightly/apt stable main\n')
         subprocess.run(['apt-get', *options, 'update'], check=True, stdout=subprocess.DEVNULL)
         policy = subprocess.check_output(['apt-cache', *options, 'policy', 'eglantine', 'eglantine-nightly'], text=True)
         self.assertIn('Candidate: 0~nx2.4+eee', policy)
         self.assertIn('Candidate: 0~nightly.2+fff', policy)
+        solver = subprocess.run(['apt-get', *options, '--simulate', 'install', 'eglantine', 'eglantine-nightly'], capture_output=True, text=True)
+        self.assertNotEqual(solver.returncode, 0)
+        self.assertIn('Conflicts', solver.stdout + solver.stderr)
+        (aptroot / 'status').write_text('Package: eglantine\nStatus: install ok installed\nVersion: 0~nx2.4+eee\nArchitecture: amd64\nConflicts: eglantine-nightly\nMaintainer: Test <test@example.com>\nDescription: Test\n')
+        switch = subprocess.check_output(['apt-get', *options, '--simulate', 'install', 'eglantine-nightly'], text=True)
+        self.assertIn('Remv eglantine ', switch)
+        self.assertIn('Inst eglantine-nightly ', switch)
+
+        def windows_stage(version, channel):
+            stage = channel.storage(self.data, 'windows') / 'staging' / version
+            stage.mkdir(parents=True)
+            for name in (channel.installer, channel.package + '-Windows-x86_64.zip', 'source.tar.gz'):
+                (stage / name).write_bytes(b'windows fixture')
+            return stage
+
+        # Independent Windows publication cannot replace or delay Linux downloads.
+        stable_linux = json.loads(self.request('/api/status')[2])['latest']
+        windows_one = publish_windows.publish_windows(windows_stage('win.1', STABLE), '1'*40, 'win.1', STABLE)
+        installer_url = windows_one['artifacts'][0]['url']
+        self.assertEqual(self.request(installer_url)[2], b'windows fixture')
+        feed = json.loads(self.request('/windows/updates/latest.json')[2])
+        self.assertEqual(feed['channel'], 'stable')
+        self.assertEqual(feed['payload'], windows_one['artifacts'][1])
+        self.assertEqual(self.request(feed['payload']['url'])[2], b'windows fixture')
+        self.assertEqual(json.loads(self.request('/api/status')[2])['latest'], stable_linux)
+        nightly_windows = publish_windows.publish_windows(windows_stage('win.nightly.1', NIGHTLY), '2'*40, 'win.nightly.1', NIGHTLY)
+        self.assertEqual(json.loads(self.request('/nightly/windows/updates/latest.json')[2])['package'], 'eglantine-nightly')
+        self.assertEqual(json.loads(self.request('/api/status')[2])['channels']['nightly']['platforms']['windows']['latest'], nightly_windows)
+        publish.publish(self.stage('0~nx2.5+999'), '9'*40, '0~nx2.5+999')
+        self.assertEqual(self.request(installer_url)[0], 200)
+        self.assertEqual(json.loads(self.request('/windows/api/status')[2])['latest'], windows_one)
+        with self.assertRaises(RuntimeError):
+            publish_windows.publish_windows(self.data / 'missing', '3'*40, 'win.failed', STABLE)
+        self.assertEqual(self.request(installer_url)[0], 200)
+        publish_windows.publish_windows(windows_stage('win.2', STABLE), '4'*40, 'win.2', STABLE)
+        self.assertEqual(self.request(installer_url)[0], 404)
+        self.assertEqual(self.request(nightly_windows['artifacts'][0]['url'])[0], 200)
+        self.assertEqual(json.loads(self.request('/api/status')[2])['latest']['commit'], '9'*40)
+        self.assertEqual(len(list((self.data / 'windows/public/releases').iterdir())), 1)
+        self.assertEqual(self.request('/windows/releases/%2e%2e/%2e%2e/source/.git/config')[0], 404)
 
 
 if __name__ == '__main__': unittest.main()
