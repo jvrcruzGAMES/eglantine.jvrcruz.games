@@ -1,0 +1,3 @@
+eglantine.jvrcruz.games {
+    reverse_proxy 127.0.0.1:39402
+}
