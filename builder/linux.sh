@@ -12,7 +12,7 @@ strip /work/linux/bin/eglantine /work/linux/bin/eden-cli
 mkdir -p /cache/tools /out
 for name in linuxdeploy linuxdeploy-plugin-qt; do
  if [[ ! -s /cache/tools/$name.AppImage ]]; then
-  curl --retry 3 -fL "https://github.com/$name/$name/releases/download/continuous/$name-x86_64.AppImage" -o "/cache/tools/$name.AppImage"
+  curl --retry 3 -fL "https://github.com/linuxdeploy/$name/releases/download/continuous/$name-x86_64.AppImage" -o "/cache/tools/$name.AppImage"
   chmod +x "/cache/tools/$name.AppImage"
  fi
 done
