@@ -1,0 +1,75 @@
+# This file is part of MXE. See LICENSE.md for licensing information.
+
+PKG_BASENAME    := qtbase
+PKG             := qt6-$(PKG_BASENAME)
+$(PKG)_WEBSITE  := https://www.qt.io/
+$(PKG)_DESCR    := Qt6
+$(PKG)_IGNORE   :=
+$(PKG)_VERSION  := 6.12.0
+$(PKG)_CHECKSUM := a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307
+$(PKG)_SUBDIR   := $(PKG_BASENAME)-everywhere-src-$($(PKG)_VERSION)
+$(PKG)_FILE     := $(PKG_BASENAME)-everywhere-src-$($(PKG)_VERSION).tar.xz
+$(PKG)_URL      := https://download.qt.io/archive/qt/6.12/$($(PKG)_VERSION)/submodules/$($(PKG)_FILE)
+$(PKG)_TARGETS  := $(BUILD) $(MXE_TARGETS)
+$(PKG)_DEPS     := cc jpeg libpng openssl pcre2 zlib zstd $(BUILD)~$(PKG)
+$(PKG)_DEPS_$(BUILD) :=
+$(PKG)_OO_DEPS_$(BUILD) := ninja
+
+define $(PKG)_UPDATE
+    $(WGET) -q -O- https://download.qt.io/official_releases/qt/6.12/ | \
+    $(SED) -n 's,.*href="\(6\.1[0-9]\.[^/]*\)/".*,\1,p' | \
+    grep -iv -- '-rc' | \
+    $(SORT) -V | \
+    tail -1
+endef
+
+define $(PKG)_BUILD
+    rm -rf '$(PREFIX)/$(TARGET)/$(MXE_QT6_ID)'
+    # review $(SOURCE_DIR)/cmake/configure-cmake-mapping.md
+    PKG_CONFIG="${TARGET}-pkg-config" \
+    PKG_CONFIG_SYSROOT_DIR="/" \
+    PKG_CONFIG_LIBDIR="$(PREFIX)/$(TARGET)/lib/pkgconfig" \
+    '$(TARGET)-cmake' -S '$(SOURCE_DIR)' -B '$(BUILD_DIR)' \
+        -G Ninja \
+        -DCMAKE_INSTALL_PREFIX='$(PREFIX)/$(TARGET)/$(MXE_QT6_ID)' \
+        -DQT_HOST_PATH='$(PREFIX)/$(BUILD)/$(MXE_QT6_ID)' \
+        -DQT_QMAKE_DEVICE_OPTIONS='CROSS_COMPILE=$(TARGET)-;PKG_CONFIG=$(TARGET)-pkg-config' \
+        -DPKG_CONFIG_EXECUTABLE='$(PREFIX)/bin/$(TARGET)-pkg-config' \
+        -DQT_QMAKE_TARGET_MKSPEC=win32-g++ \
+        -DQT_BUILD_{EXAMPLES,TESTS}=OFF \
+        -DBUILD_WITH_PCH=OFF \
+        -DFEATURE_{accessibility,opengl_dynamic,openssl,openssl_linked,pkg_config}=ON \
+        -DFEATURE_{dbus,glib,icu,fontconfig,gtk3,waylandscanner,use_gold_linker_alias}=OFF \
+        -DFEATURE_sql=OFF \
+        -DFEATURE_system_{pcre2,zlib}=ON \
+        -DFEATURE_system_{freetype,harfbuzz}=OFF \
+        -DOPENSSL_USE_STATIC_LIBS=TRUE \
+        $(PKG_CMAKE_OPTS)
+
+    cmake --build '$(BUILD_DIR)' -j '$(JOBS)'
+    cmake --install '$(BUILD_DIR)'
+    $(if $(BUILD_STATIC),$(SED) -i -e 's/^QMAKE_PRL_LIBS .*/& -lodbc32/;' \
+	      -e 's/^QMAKE_PRL_LIBS_FOR_CMAKE .*/&;-lodbc32/;' \
+              '$(PREFIX)/$(TARGET)/$(MXE_QT6_ID)/plugins/sqldrivers/qsqlodbc.prl',)
+
+    mkdir -p '$(CMAKE_TOOLCHAIN_DIR)'
+    echo 'set(QT_HOST_PATH "$(PREFIX)/$(BUILD)/$(MXE_QT6_ID)")' \
+        > '$(CMAKE_TOOLCHAIN_DIR)/$(PKG).cmake'
+endef
+
+define $(PKG)_BUILD_$(BUILD)
+    rm -rf '$(PREFIX)/$(TARGET)/$(MXE_QT6_ID)'
+    '$(TARGET)-cmake' -S '$(SOURCE_DIR)' -B '$(BUILD_DIR)' \
+        -G Ninja \
+        -DCMAKE_VERBOSE_MAKEFILE=ON \
+        -DCMAKE_CC_COMPILER='$(BUILD_CC)' \
+        -DCMAKE_CXX_COMPILER='$(BUILD_CXX)' \
+        -DCMAKE_INSTALL_PREFIX='$(PREFIX)/$(TARGET)/$(MXE_QT6_ID)' \
+        -DQT_BUILD_{TESTS,EXAMPLES}=OFF \
+        -DBUILD_WITH_PCH=OFF \
+        -DFEATURE_{eventfd,glib,harfbuzz,icu,opengl,openssl,wayland,waylandscanner,xcb,zstd}=OFF \
+        -DFEATURE_sql_{db2,ibase,mysql,oci,odbc,psql,sqlite}=OFF \
+        $(PKG_CMAKE_OPTS)
+    '$(TARGET)-cmake' --build '$(BUILD_DIR)' -j '$(JOBS)'
+    '$(TARGET)-cmake' --install '$(BUILD_DIR)'
+endef

@@ -1,6 +1,6 @@
 The Eglantine icon in web/icon.png is from Djihads80/Eglantine, branch nx2.
 Upstream source and license: https://github.com/Djihads80/Eglantine
 
-builder/ffmpeg.mk is adapted from MXE's FFmpeg package recipe.
+builder/ffmpeg.mk and builder/qt6-qtbase-minimal.mk are adapted from MXE's package recipes.
 MXE source and license: https://github.com/mxe/mxe
 The MXE recipe header and upstream licensing notices are retained.

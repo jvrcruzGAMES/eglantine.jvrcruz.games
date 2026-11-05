@@ -106,6 +106,23 @@ Dependency downloads, ccache, Qt and the MXE toolchain persist across clean retr
 
 `builder/linux.sh` follows upstream's CMake and linuxdeploy approach, using Qt 6.8.3 on Ubuntu 24.04. The `.deb` wraps the same bundled AppDir, so it does not depend on the distribution's older Qt. `builder/windows.sh` builds a pinned MXE toolchain with shared Qt 6 Widgets and Charts, Boost, FFmpeg and other dependencies, then recursively bundles DLL dependencies and Qt plugins into the ZIP. Neither build enables PGO. Toolchain source pinning is in the Windows script; linuxdeploy's continuous tools and upstream dependencies may need maintenance over time.
 
+### MinGW toolchain performance
+
+A cold Windows build first prepares GCC, Qt and its dependencies. In the supplied server log, completed preparation packages took about 193 minutes before the Windows Qt build finished; GCC alone took 44 minutes, native CMake 22 minutes and native Qt 42 minutes. These are bootstrap costs, separate from compiling Eglantine.
+
+The optimized setup:
+
+- Reuses the builder image's preinstalled native CMake instead of compiling another copy.
+- Downloads official native Qt 6.12.0 tools rather than compiling host Qt. Host and target Qt versions match, as required by [Qt's cross-compilation guide](https://doc.qt.io/qt-6/cross-compiling-qt.html). Download or validation failure falls back to the source build. `MXE_PREBUILT_HOST_QT=0` opts out.
+- Builds fresh Windows Qt without unused SQL, DBus, GLib, ICU, Mesa or external font-library dependency chains. Widgets, Charts, OpenGL and TLS remain enabled. Already compiled Qt is preserved.
+- Limits a fresh Boost build to the libraries needed by the application and MXE's checks. Already compiled Boost is preserved.
+- Changes recipes only when their contents change and avoids resetting the checkout on every build. This prevents timestamp-driven rebuilds of otherwise unchanged packages.
+- Records a completed toolchain fingerprint and reuses it on later builds, while retaining all caches if setup is interrupted. Also includes the missing dav1d recipe for AV1 and selects the supported `libusb1` package.
+
+Local verification completed toolchain preparation, cross-linked a Qt Widgets/Charts test executable, and measured a repeated ready-toolchain check at 0.44 seconds. The official native Qt download and validation took about 42 seconds. These measurements cover setup steps, not an end-to-end cold Windows build or your server.
+
+Keep `data/mxe/` and `data/cache/` across restarts and deployments. Artifact cleanup does not delete them. Updating this setup preserves completed Qt, GCC and Boost; it does not deliberately restart those expensive builds. A previously unfinished package may still need to finish its initial compilation. There is no measured guarantee for total build duration on your server. Increase `BUILD_JOBS` only when CPU and memory allow; the worker still clamps it to the daemon CPU count.
+
 Publication stages the files, generates hashes and APT metadata, signs the repository, then atomically switches `data/public/current`. The HTTP server supports byte ranges for delta downloads and does not expose private state or directory listings. The source archive contains the application checkout, fetched application dependencies, and builder scripts; toolchain caches are kept separately.
 
 ## Validation
