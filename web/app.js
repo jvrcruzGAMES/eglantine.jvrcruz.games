@@ -25,6 +25,7 @@ sudo apt update
 sudo apt install ${channel.package}`;
   document.querySelector('#zsync').textContent = `${origin}${channel.prefix}/updates/${channel.appimage}.zsync`;
   document.querySelector('#appimage-url').href = `${channel.prefix}/updates/${channel.appimage}`;
+  document.querySelectorAll('[data-linux-log]').forEach(link => { link.href = `${channel.prefix}/logs/latest.log`; });
   document.querySelector('#windows-log').href = `${channel.prefix}/windows/logs/latest.log`;
 }
 renderDefinition(definitions[selected]);
@@ -38,13 +39,14 @@ async function refresh() {
     renderDefinition(channel);
     const labels = {waiting:'Waiting for the first build', building:`Building Linux · ${(status.commit || '').slice(0,12)}`, ready:`Watching ${channel.branch} · up to date`, failed:'Build failed · automatic retry scheduled'};
     document.querySelector('#status').textContent = labels[status.phase] || `Watching ${channel.branch}`;
-    const log = document.querySelector('#log');
-    log.hidden = !status.log;
-    if (status.log) log.href = status.log;
+    document.querySelectorAll('[data-linux-log]').forEach(link => {
+      link.href = status.log_url || `${channel.prefix}/logs/latest.log`;
+    });
     const windows = status.platforms?.windows || {phase:'waiting'};
     const windowsLink = document.querySelector('#windows-download');
     const installer = windows.latest?.artifacts.find(a => a.name.endsWith('-Setup.exe'));
-    document.querySelector('#windows-status').textContent = windows.phase === 'building' ? 'Windows build in progress · Linux downloads remain available' : windows.phase === 'failed' ? 'Windows build failed · retry scheduled' : windows.latest ? `Windows · ${windows.latest.commit.slice(0,12)}` : 'Windows watcher has not reported a build yet';
+    const windowsLabels = {waiting:'Waiting for the first build', building:`Building Windows · ${(windows.commit || '').slice(0,12)}`, ready:`Watching ${channel.branch} · up to date`, failed:'Build failed · automatic retry scheduled'};
+    document.querySelector('#windows-status').textContent = windowsLabels[windows.phase] || `Watching ${channel.branch}`;
     if (installer) {
       windowsLink.href = installer.url; windowsLink.removeAttribute('aria-disabled');
       windowsLink.textContent = `Download installer ↓ · ${Math.round(installer.bytes/1024/1024)} MB`;
@@ -55,9 +57,11 @@ async function refresh() {
     const windowsLog = document.querySelector('#windows-log');
     windowsLog.href = windows.log_url || `${channel.prefix}/windows/logs/latest.log`;
     const release = status.latest;
-    document.querySelector('#release').textContent = release
-      ? `${release.commit.slice(0,12)} · ${new Date(release.published_at).toLocaleString()}`
+    const releaseLabel = published => published
+      ? `${published.commit.slice(0,12)} · ${new Date(published.published_at).toLocaleString()}`
       : 'No release published yet';
+    document.querySelector('#release').textContent = releaseLabel(release);
+    document.querySelector('#windows-release').textContent = releaseLabel(windows.latest);
     document.querySelectorAll('[data-artifact]').forEach(link => {
       const artifact = release?.artifacts.find(a => a.name === link.dataset.artifact);
       if (!artifact) {
@@ -86,6 +90,7 @@ async function refresh() {
     }
   } catch {
     document.querySelector('#status').textContent = 'Build status temporarily unavailable';
+    document.querySelector('#windows-status').textContent = 'Build status temporarily unavailable';
   }
 }
 refresh(); setInterval(refresh, 30000);
