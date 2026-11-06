@@ -1,6 +1,6 @@
 [Unit]
 Description=Eglantine stable and nightly build watcher
-Wants=network-online.target
+Wants=network-online.target eglantine-windows-worker.service
 After=network-online.target docker.service
 Requires=docker.service
 
@@ -10,7 +10,7 @@ User=apps
 WorkingDirectory=/opt/apps/eglantine.jvrcruz.games
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/opt/apps/eglantine.jvrcruz.games/.env
-ExecStart=/usr/bin/python3 /opt/apps/eglantine.jvrcruz.games/service/worker.py
+ExecStart=/usr/bin/python3 /opt/apps/eglantine.jvrcruz.games/service/worker.py --platform linux
 ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-linux eglantine-nightly-build-linux
 Restart=on-failure
 RestartSec=15

@@ -25,6 +25,7 @@ sudo apt update
 sudo apt install ${channel.package}`;
   document.querySelector('#zsync').textContent = `${origin}${channel.prefix}/updates/${channel.appimage}.zsync`;
   document.querySelector('#appimage-url').href = `${channel.prefix}/updates/${channel.appimage}`;
+  document.querySelector('#windows-log').href = `${channel.prefix}/windows/logs/latest.log`;
 }
 renderDefinition(definitions[selected]);
 async function refresh() {
@@ -43,7 +44,7 @@ async function refresh() {
     const windows = status.platforms?.windows || {phase:'waiting'};
     const windowsLink = document.querySelector('#windows-download');
     const installer = windows.latest?.artifacts.find(a => a.name.endsWith('-Setup.exe'));
-    document.querySelector('#windows-status').textContent = windows.phase === 'building' ? 'Windows build in progress · Linux downloads remain available' : windows.phase === 'failed' ? 'Windows build failed · retry scheduled' : windows.latest ? `Windows · ${windows.latest.commit.slice(0,12)}` : 'Waiting for the first Windows build';
+    document.querySelector('#windows-status').textContent = windows.phase === 'building' ? 'Windows build in progress · Linux downloads remain available' : windows.phase === 'failed' ? 'Windows build failed · retry scheduled' : windows.latest ? `Windows · ${windows.latest.commit.slice(0,12)}` : 'Windows watcher has not reported a build yet';
     if (installer) {
       windowsLink.href = installer.url; windowsLink.removeAttribute('aria-disabled');
       windowsLink.textContent = `Download installer ↓ · ${Math.round(installer.bytes/1024/1024)} MB`;
@@ -52,7 +53,7 @@ async function refresh() {
       windowsLink.textContent = 'Awaiting first Windows build';
     }
     const windowsLog = document.querySelector('#windows-log');
-    windowsLog.hidden = !windows.log; if (windows.log) windowsLog.href = windows.log;
+    windowsLog.href = windows.log_url || `${channel.prefix}/windows/logs/latest.log`;
     const release = status.latest;
     document.querySelector('#release').textContent = release
       ? `${release.commit.slice(0,12)} · ${new Date(release.published_at).toLocaleString()}`

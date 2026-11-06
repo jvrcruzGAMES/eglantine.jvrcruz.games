@@ -185,5 +185,32 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(len(list((self.data / 'windows/public/releases').iterdir())), 1)
         self.assertEqual(self.request('/windows/releases/%2e%2e/%2e%2e/source/.git/config')[0], 404)
 
+    def test_windows_log_button_before_and_during_builds(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(server, 'DATA', Path(directory)):
+            page = self.request('/')[2]
+            self.assertIn(b'id="windows-log" href="/windows/logs/latest.log"', page)
+            self.assertNotIn(b'id="windows-log" hidden', page)
+            self.assertIn(b'No Windows build has started', self.request('/windows/logs/latest.log')[2])
+            watcher = Path(directory) / 'windows/public/logs/watcher.log'
+            watcher.parent.mkdir(parents=True)
+            watcher.write_text('windows/stable: checking branch nx2\n')
+            self.assertEqual(self.request('/windows/logs/latest.log')[2], watcher.read_bytes())
+            self.assertEqual(self.request('/nightly/windows/logs/latest.log')[2], watcher.read_bytes())
+            for channel in (STABLE, NIGHTLY):
+                data = channel.storage(Path(directory), 'windows')
+                logs = data / 'public/logs'
+                logs.mkdir(parents=True, exist_ok=True)
+                (logs / 'attempt.log').write_text(channel.package + ' build in progress')
+                (data / 'status.json').write_text(json.dumps(dict(phase='building', log=channel.prefix+'/windows/logs/attempt.log')))
+                url = channel.prefix+'/windows/logs/latest.log'
+                status, headers, content = self.request(url)
+                self.assertEqual(status, 200)
+                self.assertEqual(content.decode(), channel.package + ' build in progress')
+                self.assertEqual(headers['Cache-Control'], 'no-cache')
+                self.assertEqual(headers['Content-Type'], 'text/plain; charset=utf-8')
+                self.assertEqual(self.request(url, method='HEAD')[2], b'')
+                state = json.loads(self.request(channel.prefix+'/windows/api/status')[2])
+                self.assertEqual(state['log_url'], url)
+
 
 if __name__ == '__main__': unittest.main()

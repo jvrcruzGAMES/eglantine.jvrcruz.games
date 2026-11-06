@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 import datetime as dt
+import argparse
 import fcntl
 import json
 import hashlib
+import logging
 import os
 from pathlib import Path
 import re
 import subprocess
 import time
-import traceback
 from config import DATA, ROOT, UPSTREAM, PUBLIC_URL
 from channels import CHANNELS, STABLE
 from publish import initialize_key, publish
 
 PLATFORM = os.environ.get('BUILD_PLATFORM', 'linux')
-if PLATFORM not in ('linux', 'windows'):
-    raise ValueError('BUILD_PLATFORM must be linux or windows')
+logger = logging.getLogger('eglantine.worker')
 
 def state(channel=STABLE, **changes):
     path = channel.storage(DATA, PLATFORM) / 'status.json'
@@ -146,7 +146,9 @@ def poll_channels(rebuild_seconds):
             path = channel.storage(DATA, PLATFORM) / 'status.json'
             previous = json.loads(path.read_text()) if path.exists() else {}
             if previous.get('retry_at') and dt.datetime.fromisoformat(previous['retry_at']) > dt.datetime.now(dt.timezone.utc):
+                logger.info('%s/%s: retry scheduled for %s', PLATFORM, channel.name, previous['retry_at'])
                 continue
+            logger.info('%s/%s: checking branch %s', PLATFORM, channel.name, channel.branch)
             result = subprocess.check_output(['git', 'ls-remote', UPSTREAM, f'refs/heads/{channel.branch}'],
                                              text=True, timeout=90).split()
             if not result or not re.fullmatch('[0-9a-f]{40}', result[0]):
@@ -154,21 +156,35 @@ def poll_channels(rebuild_seconds):
             sha = result[0]
             state(channel, checked_at=now(), upstream_commit=sha)
             if needs_build(previous, sha, dt.datetime.now(dt.timezone.utc), rebuild_seconds, builder_revision()):
+                logger.info('%s/%s: starting build of %s (commit, hourly or builder-change trigger)', PLATFORM, channel.name, sha)
                 build(sha, channel)
+                logger.info('%s/%s: build published', PLATFORM, channel.name)
             elif previous.get('phase') != 'ready':
                 state(channel, phase='ready', error=None)
         except Exception as exc:
-            traceback.print_exc()
+            logger.exception('%s/%s: check or build failed', PLATFORM, channel.name)
             retry_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=int(os.environ.get('RETRY_SECONDS', '1800')))
             state(channel, phase='failed', error=str(exc), finished_at=now(), retry_at=retry_at.isoformat())
 
-def main():
+def main(argv=None):
+    global PLATFORM
+    parser = argparse.ArgumentParser(description='Watch and build both Eglantine channels for one platform')
+    parser.add_argument('--platform', choices=('linux', 'windows'), default=PLATFORM)
+    PLATFORM = parser.parse_args(argv).platform
+    if PLATFORM not in ('linux', 'windows'):
+        parser.error('BUILD_PLATFORM must be linux or windows')
     DATA.mkdir(parents=True, exist_ok=True)
     lock = (DATA / ('worker-windows.lock' if PLATFORM == 'windows' else 'worker.lock')).open('w')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    if PLATFORM == 'linux': initialize_key()
+    logs = STABLE.storage(DATA, PLATFORM) / 'public/logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
+                        handlers=[logging.StreamHandler(), logging.FileHandler(logs / 'watcher.log')])
     interval = int(os.environ.get('POLL_SECONDS', '120'))
     rebuild_seconds = max(1, int(os.environ.get('REBUILD_SECONDS', '3600')))
+    logger.info('%s watcher started: poll=%ss rebuild=%ss retry=%ss; checking immediately',
+                PLATFORM, interval, rebuild_seconds, os.environ.get('RETRY_SECONDS', '1800'))
+    if PLATFORM == 'linux': initialize_key()
     while True:
         poll_channels(rebuild_seconds)
         time.sleep(interval)

@@ -81,7 +81,7 @@ sudo systemctl restart eglantine-web eglantine-worker eglantine-windows-worker
 
 ## Public domain
 
-Hosting is prepared locally; Cloudflare DNS and routing will be configured separately. For Cloudflare Tunnel, point the public hostname to `http://localhost:39402`; the local service does not terminate TLS. A tunnel does not need inbound port forwarding. `deploy/cloudflared.example.yml` contains a ready-to-adapt ingress rule; for an existing tunnel, add only that hostname rule before its catch-all. Disable caching for all paths ending in `/api/status` and all `/apt/*`, `/updates/*`, `/windows/updates/*` paths, including their `/nightly` equivalents; do not cache stale update metadata. Preserve HTTP Range headers and 206 responses.
+Hosting is prepared locally; Cloudflare DNS and routing will be configured separately. For Cloudflare Tunnel, point the public hostname to `http://localhost:39402`; the local service does not terminate TLS. A tunnel does not need inbound port forwarding. `deploy/cloudflared.example.yml` contains a ready-to-adapt ingress rule; for an existing tunnel, add only that hostname rule before its catch-all. Disable caching for all paths ending in `/api/status` and all `/apt/*`, `/updates/*`, `/windows/updates/*`, `/logs/*`, `/windows/logs/*` paths, including their `/nightly` equivalents; do not cache stale update metadata. Preserve HTTP Range headers and 206 responses.
 
 Create DNS records for `eglantine.jvrcruz.games` pointing to this server, then proxy HTTPS to `127.0.0.1:39402`. An example is in `deploy/Caddyfile`. If the server is behind NAT, forward ports 80/443 to your reverse proxy. Set `PUBLIC_URL` before building: it is embedded in the AppImage metadata and the Debian update source. Changing it requires rebuilding packages.
 
@@ -137,19 +137,18 @@ Each platform/channel reuses its own CMake/Ninja tree. Configuration runs on eve
 
 Linux uses Qt 6.8.3 with linuxdeploy. AppImage, `.deb`, source archive and signed APT metadata publish together after Linux packaging finishes. Windows independently uses cached MXE MinGW and **official precompiled Qt 6.8.3** with matching native host tools, plus upstream’s bundled precompiled SDL3. A compile/link/MOC probe validates the Qt kit; a source-built Qt fallback is available if the kit or application build fails. Other dependencies reuse cached libraries; dependencies without a compatible precompiled package are built from pinned sources. `WINDOWS_PREBUILT_LIBS=0` forces the source-built Qt path. Cold toolchain setup still takes longer than subsequent incremental builds.
 
-To upgrade an existing server, install the separate Windows unit as well:
+To upgrade an existing server, install all three service definitions together. The Linux unit also wants the Windows unit, so starting Linux starts the independent Windows watcher. Both use the same `POLL_SECONDS`, `REBUILD_SECONDS` and `RETRY_SECONDS`, check immediately at startup, and build on first run, upstream commit changes, builder changes and the hourly interval. Explicit `--platform` arguments prevent a shared environment setting from selecting the wrong platform.
 
 ```sh
-sudo systemctl stop eglantine-worker
 sudo -u apps git -C /opt/apps/eglantine.jvrcruz.games pull --ff-only
 cd /opt/apps/eglantine.jvrcruz.games
-sudo install -m 0644 deploy/eglantine-worker.service deploy/eglantine-windows-worker.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl restart eglantine-web
-sudo systemctl enable --now eglantine-worker eglantine-windows-worker
+sudo bash deploy/install-services.sh
+sudo journalctl -u eglantine-windows-worker -f
 ```
 
-If the Windows service was already running before this upgrade, stop it before pulling and start it again afterward. Stopping a platform worker stops only that platform’s owned build containers. Keep existing `data/mxe` and `data/cache` to reuse previous builds.
+The installer restarts the website and both workers, stopping any active build containers. Keep existing `data/mxe` and `data/cache` to reuse previous builds. A `git pull` alone does not install new systemd units. For a user-service installation, rerun `./install.sh` and restart both workers after pulling.
+
+The Windows card always offers a **Windows build log** button, including before the first completed build. `/windows/logs/latest.log` and `/nightly/windows/logs/latest.log` serve the latest attempt for their channel, or the Windows watcher log when no attempt exists yet. The watcher log records startup settings, branch checks, build triggers, retry scheduling and errors that occur before a build log is created. The durable watcher log is `/windows/logs/watcher.log`; systemd startup failures remain visible in the journal.
 
 The HTTP server supports byte ranges and does not expose private state or directory listings. Source archives include the application checkout, fetched application dependencies and builder scripts; Windows archives also include the installer/update harness sources. Toolchain caches are kept separately.
 

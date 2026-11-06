@@ -16,6 +16,7 @@ def channel_status(channel, platform='linux'):
     release = data / 'public/current/release.json'
     state['latest'] = json.loads(release.read_text()) if release.exists() else None
     state['definition'] = channel.public()
+    state['log_url'] = channel.prefix + ('/windows' if platform == 'windows' else '') + '/logs/latest.log'
     if platform == 'linux':
         state['platforms'] = {'linux': dict(state), 'windows': channel_status(channel, 'windows')}
     return state
@@ -54,7 +55,24 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Length', '2'); self.end_headers()
             if not head: self.wfile.write(b'ok')
             return
-        if path in ('/', '/index.html', '/style.css', '/app.js', '/icon.png'):
+        if path == '/logs/latest.log':
+            state_file = data / 'status.json'
+            state = json.loads(state_file.read_text()) if state_file.exists() else {}
+            base = data / 'public/logs'
+            relative = Path(state.get('log') or '').name
+            if not relative or not (base / relative).is_file():
+                base = STABLE.storage(DATA, platform) / 'public/logs'
+                relative = 'watcher.log'
+            if not (base / relative).is_file():
+                content = f'No {platform.title()} build has started for {channel.package} yet.\n'.encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', str(len(content)))
+                self.end_headers()
+                if not head: self.wfile.write(content)
+                return
+        elif path in ('/', '/index.html', '/style.css', '/app.js', '/icon.png'):
             base = ROOT / 'web'; relative = 'index.html' if path == '/' else path[1:]
         elif path == '/eglantine-archive-keyring.gpg':
             base = DATA / 'keys'; relative = path[1:]
@@ -82,7 +100,7 @@ class Handler(SimpleHTTPRequestHandler):
                 else: start, end = max(0, size - int(b)), size - 1
                 if start <= end and start < size: ranges.append((start, end))
             if not ranges: return self.range_error(size)
-        mime = self.guess_type(str(file))
+        mime = 'text/plain; charset=utf-8' if file.suffix == '.log' else self.guess_type(str(file))
         boundary = 'eglantine-' + uuid.uuid4().hex
         multipart = len(ranges) > 1
         def part_header(start, end):
@@ -97,7 +115,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('Content-Length', str(length))
         self.send_header('Accept-Ranges', 'bytes')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Cache-Control', 'no-cache' if path.startswith(('/apt/', '/updates/')) else 'public, max-age=300')
+        self.send_header('Cache-Control', 'no-cache' if path.startswith(('/apt/', '/updates/', '/logs/')) or path in ('/', '/index.html', '/app.js', '/style.css') else 'public, max-age=300')
         if partial and not multipart:
             start, end = ranges[0]
             self.send_header('Content-Range', f'bytes {start}-{end}/{size}')

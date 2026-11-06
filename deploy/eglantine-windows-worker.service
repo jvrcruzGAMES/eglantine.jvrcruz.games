@@ -11,7 +11,7 @@ WorkingDirectory=/opt/apps/eglantine.jvrcruz.games
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/opt/apps/eglantine.jvrcruz.games/.env
 Environment=BUILD_PLATFORM=windows
-ExecStart=/usr/bin/python3 /opt/apps/eglantine.jvrcruz.games/service/worker.py
+ExecStart=/usr/bin/python3 /opt/apps/eglantine.jvrcruz.games/service/worker.py --platform windows
 ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-windows eglantine-nightly-build-windows
 Restart=on-failure
 RestartSec=15

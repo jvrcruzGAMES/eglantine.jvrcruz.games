@@ -22,10 +22,13 @@ TimeoutStopSec=60
 WantedBy=default.target
 UNIT
  if [[ "$unit" = windows-worker ]]; then
+  sed -i '/^ExecStart=/s/$/ --platform windows/' "$HOME/.config/systemd/user/eglantine-$unit.service"
   sed -i '/Environment=PYTHONUNBUFFERED=1/a Environment=BUILD_PLATFORM=windows' "$HOME/.config/systemd/user/eglantine-$unit.service"
   sed -i '/RestartSec=15/a ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-windows eglantine-nightly-build-windows' "$HOME/.config/systemd/user/eglantine-$unit.service"
  fi
  if [[ "$unit" = worker ]]; then
+  sed -i '/^Wants=/s/$/ eglantine-windows-worker.service/' "$HOME/.config/systemd/user/eglantine-$unit.service"
+  sed -i '/^ExecStart=/s/$/ --platform linux/' "$HOME/.config/systemd/user/eglantine-$unit.service"
   sed -i '/RestartSec=15/a ExecStopPost=-/usr/bin/docker stop -t 10 eglantine-build-linux eglantine-nightly-build-linux' "$HOME/.config/systemd/user/eglantine-$unit.service"
  fi
 done

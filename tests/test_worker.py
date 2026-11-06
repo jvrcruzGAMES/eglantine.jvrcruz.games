@@ -60,6 +60,41 @@ class DockerStartupTests(unittest.TestCase):
 
 
 class ChannelSchedulingTests(unittest.TestCase):
+    def test_same_triggers_for_both_platforms_and_branches(self):
+        import worker
+        from channels import CHANNELS
+        current = dt.datetime.now(dt.timezone.utc)
+        ready = dict(last_success='a'*40, last_success_started_at=current.isoformat(), builder_revision='current')
+        cases = [
+            ('first build', {}, True),
+            ('unchanged', ready, False),
+            ('commit change', dict(ready, last_success='b'*40), True),
+            ('hourly', dict(ready, last_success_started_at=(current-dt.timedelta(seconds=3601)).isoformat()), True),
+            ('builder change', dict(ready, builder_revision='old'), True),
+            ('retry due', dict(ready, last_success='b'*40, retry_at=(current-dt.timedelta(seconds=1)).isoformat()), True),
+            ('retry pending', dict(ready, retry_at=(current+dt.timedelta(hours=1)).isoformat()), False),
+        ]
+        for platform in ('linux', 'windows'):
+            for label, previous, expected in cases:
+                with self.subTest(platform=platform, trigger=label), tempfile.TemporaryDirectory() as directory, patch.object(worker, 'DATA', Path(directory)), patch.object(worker, 'PLATFORM', platform), patch.object(worker, 'builder_revision', return_value='current'):
+                    for channel in CHANNELS:
+                        worker.state(channel, **previous)
+                    with patch.object(worker.subprocess, 'check_output', return_value='a'*40 + '\tref'), patch.object(worker, 'build') as builds:
+                        worker.poll_channels(3600)
+                    self.assertEqual([call.args[1] for call in builds.call_args_list], list(CHANNELS) if expected else [])
+
+    def test_platform_argument_overrides_environment_and_polls_immediately(self):
+        import worker
+        class StopPolling(Exception): pass
+        for platform in ('linux', 'windows'):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory, patch.object(worker, 'DATA', Path(directory)), patch.object(worker, 'PLATFORM', 'windows' if platform == 'linux' else 'linux'), patch.dict(os.environ, {}, clear=True), patch.object(worker, 'initialize_key') as key, patch.object(worker.logging, 'basicConfig') as configure, patch.object(worker, 'poll_channels', side_effect=StopPolling) as poll, patch.object(worker.time, 'sleep') as sleep:
+                with self.assertRaises(StopPolling):
+                    worker.main(['--platform', platform])
+                poll.assert_called_once_with(3600)
+                sleep.assert_not_called()
+                self.assertEqual(key.call_count, int(platform == 'linux'))
+                for handler in configure.call_args.kwargs['handlers']: handler.close()
+
     def test_failed_channel_does_not_delay_other_channel(self):
         import worker
         from channels import STABLE, NIGHTLY
