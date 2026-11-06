@@ -75,16 +75,9 @@ def builder_revision():
     return digest.hexdigest()
 
 
-def needs_build(previous, sha, current_time, rebuild_seconds, revision=None):
-    if revision is not None and previous.get('builder_revision') != revision:
-        return True
-    if previous.get('last_success') != sha:
-        return True
-    try:
-        last_start = dt.datetime.fromisoformat(previous['last_success_started_at'])
-        return (current_time - last_start).total_seconds() >= rebuild_seconds
-    except (KeyError, ValueError, TypeError):
-        return True
+def needs_build(previous, sha, revision=None):
+    return (previous.get('last_success') != sha or
+            (revision is not None and previous.get('builder_revision') != revision))
 
 
 def build(sha, channel=STABLE):
@@ -140,7 +133,7 @@ def build(sha, channel=STABLE):
     state(channel, phase='ready', platform=None, last_success=sha, release=release['version'],
           finished_at=now(), last_success_started_at=started_at, error=None, retry_at=None, builder_revision=revision)
 
-def poll_channels(rebuild_seconds):
+def poll_channels():
     for channel in CHANNELS:
         try:
             path = channel.storage(DATA, PLATFORM) / 'status.json'
@@ -155,8 +148,8 @@ def poll_channels(rebuild_seconds):
                 raise RuntimeError(f'Upstream branch {channel.branch} returned no commit')
             sha = result[0]
             state(channel, checked_at=now(), upstream_commit=sha)
-            if needs_build(previous, sha, dt.datetime.now(dt.timezone.utc), rebuild_seconds, builder_revision()):
-                logger.info('%s/%s: starting build of %s (commit, hourly or builder-change trigger)', PLATFORM, channel.name, sha)
+            if needs_build(previous, sha, builder_revision()):
+                logger.info('%s/%s: starting build of %s (first build, commit or builder-change trigger)', PLATFORM, channel.name, sha)
                 build(sha, channel)
                 logger.info('%s/%s: build published', PLATFORM, channel.name)
             elif previous.get('phase') != 'ready':
@@ -181,12 +174,11 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
                         handlers=[logging.StreamHandler(), logging.FileHandler(logs / 'watcher.log')])
     interval = int(os.environ.get('POLL_SECONDS', '120'))
-    rebuild_seconds = max(1, int(os.environ.get('REBUILD_SECONDS', '3600')))
-    logger.info('%s watcher started: poll=%ss rebuild=%ss retry=%ss; checking immediately',
-                PLATFORM, interval, rebuild_seconds, os.environ.get('RETRY_SECONDS', '1800'))
+    logger.info('%s watcher started: changes only; poll=%ss retry=%ss; checking immediately',
+                PLATFORM, interval, os.environ.get('RETRY_SECONDS', '1800'))
     if PLATFORM == 'linux': initialize_key()
     while True:
-        poll_channels(rebuild_seconds)
+        poll_channels()
         time.sleep(interval)
 
 if __name__ == '__main__': main()

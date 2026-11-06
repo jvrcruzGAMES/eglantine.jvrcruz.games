@@ -12,16 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'service'))
 from worker import needs_build, docker_resources, call
 
 class SchedulingTests(unittest.TestCase):
-    def test_commit_changes_and_hourly_rebuilds(self):
-        started = dt.datetime(2026, 11, 5, tzinfo=dt.timezone.utc)
-        previous = {'last_success': 'a' * 40, 'last_success_started_at': started.isoformat()}
-        self.assertFalse(needs_build(previous, 'a' * 40, started + dt.timedelta(seconds=3599), 3600))
-        self.assertTrue(needs_build(previous, 'a' * 40, started + dt.timedelta(hours=1), 3600))
-        self.assertTrue(needs_build(previous, 'b' * 40, started, 3600))
-        self.assertTrue(needs_build({}, 'a' * 40, started, 3600))
-        # Migrate old state without a scheduling timestamp by rebuilding once.
-        self.assertTrue(needs_build({'last_success': 'a' * 40}, 'a' * 40, started, 3600))
-        self.assertTrue(needs_build(previous, 'a' * 40, started + dt.timedelta(seconds=60), 60))
+    def test_only_changes_trigger_builds(self):
+        previous = {'last_success': 'a' * 40, 'builder_revision': 'current',
+                    'last_success_started_at': '2000-01-01T00:00:00+00:00'}
+        self.assertFalse(needs_build(previous, 'a' * 40, 'current'))
+        self.assertFalse(needs_build({'last_success': 'a' * 40}, 'a' * 40))
+        self.assertTrue(needs_build(previous, 'b' * 40, 'current'))
+        self.assertTrue(needs_build(previous, 'a' * 40, 'changed'))
+        self.assertTrue(needs_build({}, 'a' * 40, 'current'))
 
 class DockerStartupTests(unittest.TestCase):
     def test_small_server_resources(self):
@@ -69,7 +67,7 @@ class ChannelSchedulingTests(unittest.TestCase):
             ('first build', {}, True),
             ('unchanged', ready, False),
             ('commit change', dict(ready, last_success='b'*40), True),
-            ('hourly', dict(ready, last_success_started_at=(current-dt.timedelta(seconds=3601)).isoformat()), True),
+            ('unchanged after years', dict(ready, last_success_started_at='2000-01-01T00:00:00+00:00'), False),
             ('builder change', dict(ready, builder_revision='old'), True),
             ('retry due', dict(ready, last_success='b'*40, retry_at=(current-dt.timedelta(seconds=1)).isoformat()), True),
             ('retry pending', dict(ready, retry_at=(current+dt.timedelta(hours=1)).isoformat()), False),
@@ -80,7 +78,7 @@ class ChannelSchedulingTests(unittest.TestCase):
                     for channel in CHANNELS:
                         worker.state(channel, **previous)
                     with patch.object(worker.subprocess, 'check_output', return_value='a'*40 + '\tref'), patch.object(worker, 'build') as builds:
-                        worker.poll_channels(3600)
+                        worker.poll_channels()
                     self.assertEqual([call.args[1] for call in builds.call_args_list], list(CHANNELS) if expected else [])
 
     def test_platform_argument_overrides_environment_and_polls_immediately(self):
@@ -90,7 +88,7 @@ class ChannelSchedulingTests(unittest.TestCase):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory, patch.object(worker, 'DATA', Path(directory)), patch.object(worker, 'PLATFORM', 'windows' if platform == 'linux' else 'linux'), patch.dict(os.environ, {}, clear=True), patch.object(worker, 'initialize_key') as key, patch.object(worker.logging, 'basicConfig') as configure, patch.object(worker, 'poll_channels', side_effect=StopPolling) as poll, patch.object(worker.time, 'sleep') as sleep:
                 with self.assertRaises(StopPolling):
                     worker.main(['--platform', platform])
-                poll.assert_called_once_with(3600)
+                poll.assert_called_once_with()
                 sleep.assert_not_called()
                 self.assertEqual(key.call_count, int(platform == 'linux'))
                 for handler in configure.call_args.kwargs['handlers']: handler.close()
@@ -105,7 +103,7 @@ class ChannelSchedulingTests(unittest.TestCase):
                 worker.state(channel, phase='ready', last_success=sha,
                              last_success_started_at=worker.now(), builder_revision=worker.builder_revision())
             with patch.object(worker.subprocess, 'check_output', side_effect=['a'*40 + '\trefs/heads/nx2', 'b'*40 + '\trefs/heads/nx2-experimental']) as remote, patch.object(worker, 'build', side_effect=fake_build) as builds:
-                worker.poll_channels(3600)
+                worker.poll_channels()
             self.assertEqual([call.args[1] for call in builds.call_args_list], [STABLE, NIGHTLY])
             self.assertEqual(remote.call_args_list[1].args[0][-1], 'refs/heads/nx2-experimental')
             stable = json.loads((Path(directory) / 'status.json').read_text())
@@ -113,7 +111,7 @@ class ChannelSchedulingTests(unittest.TestCase):
             self.assertEqual(stable['phase'], 'failed')
             self.assertEqual(nightly['phase'], 'ready')
             with patch.object(worker.subprocess, 'check_output', return_value='b'*40 + '\trefs/heads/nx2-experimental') as remote, patch.object(worker, 'build') as builds:
-                worker.poll_channels(3600)
+                worker.poll_channels()
             self.assertEqual(remote.call_count, 1)
             self.assertEqual(remote.call_args.args[0][-1], 'refs/heads/nx2-experimental')
             builds.assert_not_called()
