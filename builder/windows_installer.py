@@ -25,6 +25,8 @@ def build_installer(payload, work, out, source, harness, package, version, publi
     compile = ['x86_64-w64-mingw32.shared-gcc', '-O2', '-static-libgcc', '-municode', '-mwindows',
                '-s', str(harness / 'launcher.c'), '-o', str(staging / 'Launcher.exe'), '-lcrypt32']
     subprocess.run(compile, check=True)
+    # Keep the shortcut icon outside version directories pruned by auto-updates.
+    shutil.copy2(source / 'dist/eden.ico', staging / 'emulator.ico')
     shutil.copy2(harness / 'updater.ps1', staging / 'updater.ps1')
     (staging / 'install.json').write_text(json.dumps(dict(schema=1, channel=channel, package=package, title=title,
         feed=f'{public_url}{prefix}/windows/updates/latest.json')))
