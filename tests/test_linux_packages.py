@@ -16,13 +16,26 @@ spec.loader.exec_module(package_linux)
 
 
 class LinuxPackageTests(unittest.TestCase):
+    def test_current_and_legacy_desktop_templates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / 'dist').mkdir()
+            with self.assertRaisesRegex(FileNotFoundError, 'No supported Eglantine desktop template'):
+                package_linux.desktop_template(source)
+            legacy = source / 'dist/dev.eden_emu.eden.desktop'
+            current = source / 'dist/dev.eglantine.eglantine.desktop'
+            legacy.write_text('[Desktop Entry]\nName=Legacy\n')
+            self.assertEqual(package_linux.desktop_template(source), legacy)
+            current.write_text('[Desktop Entry]\nName=Eglantine\n')
+            self.assertEqual(package_linux.desktop_template(source), current)
+
     def test_channels_have_distinct_files_but_conflict_by_package_name(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'source'
             (source / 'dist').mkdir(parents=True)
             (source / 'dist/Eglantine.png').write_bytes(b'icon fixture')
-            (source / 'dist/dev.eden_emu.eden.desktop').write_text('[Desktop Entry]\nType=Application\nName=Eglantine\nIcon=dev.eglantine.eglantine\nExec=eglantine %f\nTryExec=eglantine\n')
+            (source / 'dist/dev.eglantine.eglantine.desktop').write_text('[Desktop Entry]\nType=Application\nName=Eglantine\nIcon=dev.eglantine.eglantine\nExec=eglantine %f\nTryExec=eglantine\n')
             (source / 'LICENSE.txt').write_text('license fixture')
             keys = root / 'keys'
             keys.mkdir()

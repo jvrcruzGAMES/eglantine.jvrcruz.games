@@ -18,6 +18,15 @@ def metadata(package):
     raise ValueError(f'Unsupported package: {package}')
 
 
+def desktop_template(source):
+    dist = source / 'dist'
+    for name in ('dev.eglantine.eglantine.desktop', 'dev.eden_emu.eden.desktop'):
+        candidate = dist / name
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f'No supported Eglantine desktop template found in {dist}')
+
+
 def desktop_text(source, meta, executable):
     changes = {'Name': meta['title'], 'Icon': meta['icon'], 'Exec': executable + ' %f', 'TryExec': executable}
     return '\n'.join(key + '=' + changes[key] if (key := line.split('=', 1)[0]) in changes else line
@@ -26,7 +35,7 @@ def desktop_text(source, meta, executable):
 
 def prepare_desktop(source, work, meta):
     work.mkdir(parents=True, exist_ok=True)
-    (work / meta['desktop']).write_text(desktop_text(source / 'dist/dev.eden_emu.eden.desktop', meta, 'eglantine'))
+    (work / meta['desktop']).write_text(desktop_text(desktop_template(source), meta, 'eglantine'))
     shutil.copy2(source / 'dist/Eglantine.png', work / (meta['icon'] + '.png'))
 
 
@@ -43,7 +52,7 @@ def package_deb(source, work, out, keys, meta, version, public_url):
     launcher.write_text(f'#!/bin/sh\nexec /opt/{package}/AppRun "$@"\n')
     launcher.chmod(0o755)
     (root / f'usr/share/applications/{package}.desktop').write_text(
-        desktop_text(source / 'dist/dev.eden_emu.eden.desktop', meta, package))
+        desktop_text(desktop_template(source), meta, package))
     shutil.copy2(source / 'dist/Eglantine.png', root / f'usr/share/icons/hicolor/256x256/apps/{meta["icon"]}.png')
     shutil.copy2(source / 'LICENSE.txt', root / f'usr/share/doc/{package}/copyright')
     keyname = 'eglantine-archive-keyring.gpg'
