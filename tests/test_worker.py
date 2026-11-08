@@ -58,6 +58,19 @@ class DockerStartupTests(unittest.TestCase):
 
 
 class ChannelSchedulingTests(unittest.TestCase):
+    def test_existing_checkouts_migrate_origin_before_fetching(self):
+        import worker
+        import publish_windows
+        from channels import CHANNELS
+        for platform in ('linux', 'windows'):
+            for channel in CHANNELS:
+                with self.subTest(platform=platform, channel=channel.name), tempfile.TemporaryDirectory() as directory, patch.object(worker, 'DATA', Path(directory)), patch.object(worker, 'PLATFORM', platform), patch.object(worker, 'builder_revision', return_value='revision'), patch.object(worker, 'docker_resources', return_value=(1, '4g')), patch.object(worker, 'call') as commands, patch.object(worker, 'publish', return_value={'version':'fixture'}), patch.object(publish_windows, 'publish_windows', return_value={'version':'fixture'}):
+                    source = channel.storage(Path(directory), platform) / 'source'
+                    (source / '.git').mkdir(parents=True)
+                    worker.build('a'*40, channel)
+                    self.assertEqual(commands.call_args_list[0].args[0], ['git', '-C', str(source), 'remote', 'set-url', 'origin', worker.UPSTREAM])
+                    self.assertEqual(commands.call_args_list[1].args[0], ['git', '-C', str(source), 'fetch', 'origin', channel.branch])
+
     def test_same_triggers_for_both_platforms_and_branches(self):
         import worker
         from channels import CHANNELS

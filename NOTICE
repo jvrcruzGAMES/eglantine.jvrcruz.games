@@ -1,5 +1,5 @@
-The Eglantine icon in web/icon.png is from Djihads80/Eglantine, branch nx2.
-Upstream source and license: https://github.com/Djihads80/Eglantine
+The Eglantine icon in web/icon.png is from Eglantine-Community/Eglantine, branch nx2.
+Upstream source and license: https://github.com/Eglantine-Community/Eglantine
 
 builder/ffmpeg.mk and builder/qt6-qtbase-minimal.mk are adapted from MXE.
 MXE source and license: https://github.com/mxe/mxe (builder/MXE-LICENSE.md).

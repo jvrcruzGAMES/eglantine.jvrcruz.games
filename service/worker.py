@@ -69,7 +69,7 @@ def builder_revision():
         names += [str(p.relative_to(ROOT)) for p in (ROOT / 'builder').iterdir() if p.is_file()]
         names += [str(p.relative_to(ROOT)) for p in (ROOT / 'windows').iterdir() if p.is_file()]
         names += ['service/publish_windows.py']
-    digest = hashlib.sha256(PUBLIC_URL.encode())
+    digest = hashlib.sha256((PUBLIC_URL + "\n" + UPSTREAM).encode())
     for name in sorted(set(names)):
         digest.update(name.encode()); digest.update((ROOT / name).read_bytes())
     return digest.hexdigest()
@@ -95,6 +95,8 @@ def build(sha, channel=STABLE):
     with (logs / logname).open('w', buffering=1) as log:
         if not (source / '.git').exists():
             call(['git', 'clone', '--depth', '1', '--no-checkout', '--branch', channel.branch, UPSTREAM, str(source)], log)
+        # Existing checkouts must migrate as well as newly cloned repositories.
+        call(['git', '-C', str(source), 'remote', 'set-url', 'origin', UPSTREAM], log)
         call(['git', '-C', str(source), 'fetch', 'origin', channel.branch], log)
         call(['git', '-C', str(source), 'checkout', '--force', sha], log)
         call(['git', '-C', str(source), 'submodule', 'update', '--init', '--recursive'], log)

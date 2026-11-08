@@ -59,7 +59,7 @@ Architecture: amd64
 Maintainer: Eglantine builds <builds@jvrcruz.games>
 Depends: libc6 (>= 2.39), libstdc++6, libgl1, libegl1, libvulkan1, libx11-6, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libxcb-cursor0
 Recommends: mesa-vulkan-drivers
-Homepage: https://github.com/Djihads80/Eglantine
+Homepage: https://github.com/Eglantine-Community/Eglantine
 Description: {meta['title']} {meta['branch']} development build
  Automatically built from the {meta['branch']} branch. Includes launcher integration and APT updates.
 ''')

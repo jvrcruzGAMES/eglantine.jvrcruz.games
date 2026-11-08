@@ -11,7 +11,7 @@ function renderDefinition(channel) {
   document.querySelector('#channel-description').textContent = channel.name === 'nightly'
     ? 'Experimental builds, packaged as eglantine-nightly. Install one Debian channel at a time.'
     : 'The nx2 channel, packaged as eglantine. Install one Debian channel at a time.';
-  document.querySelector('#upstream-source').href = `https://github.com/Djihads80/Eglantine/tree/${channel.branch}`;
+  document.querySelector('#upstream-source').href = `https://github.com/Eglantine-Community/Eglantine/tree/${channel.branch}`;
   document.querySelectorAll('[data-channel]').forEach(link => {
     if (link.dataset.channel === selected) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');

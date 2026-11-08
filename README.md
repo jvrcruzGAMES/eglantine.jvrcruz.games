@@ -1,6 +1,6 @@
 # Eglantine nx2 build distribution
 
-A local build worker watches `https://github.com/Djihads80/Eglantine`, branches `nx2` and `nx2-experimental`, every two minutes. It builds on first run and when upstream commits or build scripts change; unchanged successful builds are never rebuilt on a timer. Separate Linux and Windows workers run concurrently. Each worker builds one channel at a time. Windows uses MinGW and publishes an EXE installer. AppImage, Debian packages and the signed APT repository are published immediately after Linux packaging and source archiving finish; no other platform build delays publication. A failure leaves that channel's previous release available and retries it after 30 minutes; the other channel is still checked and built. No GitHub credentials or upstream changes are needed.
+A local build worker watches `https://github.com/Eglantine-Community/Eglantine`, branches `nx2` and `nx2-experimental`, every two minutes. It builds on first run and when upstream commits or build scripts change; unchanged successful builds are never rebuilt on a timer. Separate Linux and Windows workers run concurrently. Each worker builds one channel at a time. Windows uses MinGW and publishes an EXE installer. AppImage, Debian packages and the signed APT repository are published immediately after Linux packaging and source archiving finish; no other platform build delays publication. A failure leaves that channel's previous release available and retries it after 30 minutes; the other channel is still checked and built. No GitHub credentials or upstream changes are needed.
 
 ## Run
 
@@ -132,6 +132,8 @@ Each successful platform build publishes immediately. Publication verifies artif
 APT metadata uses the shared archive key in `data/gnupg/`. **Back up this directory securely** and retain it across redeployments; losing it breaks trust for existing installations. Never publish it. Only the exported public key is mounted into Linux build containers.
 
 ## Builds
+
+Existing source checkouts automatically have their `origin` URL updated to `https://github.com/Eglantine-Community/Eglantine.git` before fetching. Changing the upstream URL also triggers a rebuild, even if its commit is unchanged. Restart both workers after pulling repository configuration changes.
 
 Each platform/channel reuses its own CMake/Ninja tree. Configuration runs on every attempt; Ninja compiles changed inputs. If incremental configuration or compilation fails, only that platform’s application build tree is removed and a full retry runs once. Dependencies, toolchains and ccache persist. Packaging or Docker startup errors do not trigger a clean compile. Changes to build/packaging scripts also trigger a rebuild on the next poll.
 
